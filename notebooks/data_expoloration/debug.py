@@ -1,29 +1,62 @@
 # To add a new cell, type '# %%'
 # To add a new markdown cell, type '# %% [markdown]'
 # %%
-from IPython import get_ipython
-
-# %%
 import tensorflow as tf
-from tensorflow.keras.layers import Conv2D, Input, LeakyReLU, ZeroPadding2D, BatchNormalization, MaxPool2D, Add, DepthwiseConv2D, GlobalAveragePooling2D, Flatten, Softmax, GlobalMaxPooling2D, Flatten, Reshape
+from tensorflow.keras.layers import Conv2D, Input, LeakyReLU, ZeroPadding2D, BatchNormalization, MaxPool2D, Add
 from tensorflow.keras import backend as K
 from matplotlib import pyplot as plt
 from PIL import Image
 from functools import wraps, partial, reduce
 from tensorflow import zeros
 from tensorflow.keras import Input, Model
-from os import path
-import pandas as pd
+
 import matplotlib.pyplot as plt
 import seaborn as sns
 import tensorboard
 
+import pandas as pd
+
 physical_devices = tf.config.experimental.list_physical_devices('GPU') 
 for physical_device in physical_devices: 
     tf.config.experimental.set_memory_growth(physical_device, True)
-from tensorflow.python.keras.regularizers import l2
 
-get_ipython().run_line_magic('load_ext', 'tensorboard')
+# %% [markdown]
+# # Implementing the DarkNet 53 
+# 
+# The cnn consists of a 53 layer deep nn each layer is followed by BN and a Leaky relu activation. Downsampling is done using the conv layers with stride 2.  
+# First step is to overload the BatchNorm Block.
+
+# %%
+from tensorflow.python.keras.layers import DepthwiseConv2D
+from tensorflow.python.keras.regularizers import l2
+# class BatchNormalization(BatchNormalization):
+#     def call(self, x, training=False):
+#         if not training:
+#             training = tf.constant(training)
+#         training = tf.logical_and(self.trainable, training)
+#         return super().call(x, training)
+
+
+# %%
+# def convolutional(input_layer, filters_shape, downsample=False, activate=True, bn=True):
+#     if downsample:
+#         input_layer = ZeroPadding2D(((1, 0), (1, 0)))(input_layer)
+#         padding = 'valid'
+#         strides = 2
+#     else:
+#         strides = 1
+#         padding = 'same'
+#
+#     conv = Conv2D(filters=filters_shape[-1], kernel_size = filters_shape[0], strides=strides,
+#                   padding=padding, use_bias=not bn, kernel_regularizer=l2(0.0005),
+#                   kernel_initializer=tf.random_normal_initializer(stddev=0.01),
+#                   bias_initializer=tf.constant_initializer(0.))(input_layer)
+#     if bn:
+#         conv = BatchNormalization()(conv)
+#     if activate == True:
+#         conv = LeakyReLU(alpha=0.1)(conv)
+#
+#     return conv
 
 
 # %%
@@ -138,7 +171,10 @@ def space_to_depth_x2_output_shape(input_shape):
             input_shape[3]) if input_shape[1] else (input_shape[0], None, None,
                                                     4 * input_shape[3])
 
+# %% [markdown]
+# defining the Darknet res connection
 
+# %%
 def resblock_body(x, num_filters, num_blocks):
     '''A series of resblocks starting with a downsampling Convolution2D'''
     # Darknet uses left and top padding instead of 'same' mode
@@ -152,6 +188,7 @@ def resblock_body(x, num_filters, num_blocks):
     return x
 
 
+
 def darknet53_body(x):
     '''Darknet53 body having 52 Convolution2D layers'''
     x = DarknetConv2D_BN_Leaky(32, (3,3))(x)
@@ -162,55 +199,53 @@ def darknet53_body(x):
     x = resblock_body(x, 1024, 4)
     return x
 
-# %%
-def darknet53(input_shape, input_tensor, pooling: str = 'avg', include_top: boolean = true, weights: str = 'imagenet', classes: int = 1000, **kwargs: dict):
-    """Defines a Darket53 cnn model.
+def get_model_memory_usage(batch_size, model):
+    import numpy as np
 
-    Args:
-        input_shape ([type]): The input tensor shape.
-        input_tensor ([type]): The input tensor.
-        pooling (str, optional): A string representing the pooling type. Options: avg and max. Defaults to avg.
-        include_top (boolean, optional): true IFF the model is to include a top section for classification. Defaults to true.
-        weights (str, optional): the wieghts to use in the preinitialised model.
-        classes (int, optional): [description]. Defaults to 1000.
-    """
-    if not (weights in ('imagenet', None) or path.exists(weights)):
-        raise ValueError('The `weights` argument should be either '
-                         '`None` (random initialization), `imagenet` '
-                         '(pre-training on ImageNet), '
-                         'or the path to the weights file to be loaded.')
-    if weights == 'imagenet' and include_top and classes != 1000:
-        raise ValueError('Classes should be 1000 when using imagenet')
-    
-    if input_tensor is None:
-        img_input = Input(shape=input_shape)
-    else:
-        img_input = input_tensor
-    
-    x = darknet53_body(img_input)
-    if include_top:
-        model_name='darknet53'
-        x = GlobalAveragePooling2D(name='avg_pool')(x)
-        x = Reshape((1, 1, 1024))(x)
-        x = DarknetConv2D(classes, (1, 1))(x)
-        x = Flatten()(x)
-        x = Softmax(name='Predictions/Softmax')(x)
-    else:
-        model_name='darknet53_headless'
-        if pooling == 'avg':
-            x = GlobalAveragePooling2D(name='avg_pool')(x)
-        elif pooling == 'max':
-            x = GlobalMaxPooling2D(name='max_pool')(x)
+    shapes_mem_count = 0
+    internal_model_mem_count = 0
+    for l in model.layers:
+        layer_type = l.__class__.__name__
+        if layer_type == 'Model':
+            internal_model_mem_count += get_model_memory_usage(batch_size, l)
+        single_layer_mem = 1
+        for s in l.output_shape:
+            if s is None:
+                continue
+            single_layer_mem *= s
+        shapes_mem_count += single_layer_mem[1]
 
-    inputs = img_input
+    trainable_count = np.sum([K.count_params(p) for p in set(model.trainable_weights)])
+    non_trainable_count = np.sum([K.count_params(p) for p in set(model.non_trainable_weights)])
 
-    # Create model.
-    model = Model(inputs, x, name=model_name)
+    number_size = 4.0
+    if K.floatx() == 'float16':
+         number_size = 2.0
+    if K.floatx() == 'float64':
+         number_size = 8.0
 
-    # TODO: Load weights.
+    total_memory = number_size*(batch_size*shapes_mem_count + trainable_count + non_trainable_count)
+    gbytes = np.round(total_memory / (1024.0 ** 3), 3) + internal_model_mem_count
+    return gbytes
 
-    return model
+
+from pandas import read_excel, DataFrame
+
+
+layer_outputs = []
+# mock_inputs = zeros((224, 224, 3, 100))
+for i in range(1, 40):
+    inputs = Input(shape=(224*i, 224*i, 3))
+    x = darknet53_body(inputs)
+    model = Model(inputs=inputs, outputs=x, name="mnist_model")
+    model.summary()
+    get_model_memory_usage(10, model)
+    layer_outputs += [{'input': 224*i, 'output': model.layers[-1].output.shape[1]}]
+    print(f'iteration {i} input: {224*i}, {224*i} returns {model.layers[-1].output.shape}')
+
 
 # %%
-def yolo_body():
-    pass
+results = pd.DataFrame(layer_outputs)
+sns.regplot(x='input', y='output', data=results)
+plt.show()
+# %%

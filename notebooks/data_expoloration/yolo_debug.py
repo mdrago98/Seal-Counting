@@ -212,5 +212,3 @@ def darknet53(input_shape, input_tensor, pooling: str = 'avg', include_top: bool
     return model
 
 # %%
-def yolo_body():
-    pass
