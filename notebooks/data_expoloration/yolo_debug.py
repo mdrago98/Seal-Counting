@@ -6,6 +6,7 @@ from IPython import get_ipython
 # %%
 import tensorflow as tf
 from tensorflow.keras.layers import Conv2D, Input, LeakyReLU, ZeroPadding2D, BatchNormalization, MaxPool2D, Add, DepthwiseConv2D, GlobalAveragePooling2D, Flatten, Softmax, GlobalMaxPooling2D, Flatten, Reshape
+from tensorflow.keras.callbacks import TensorBoard, ModelCheckpoint, ReduceLROnPlateau, LearningRateScheduler, EarlyStopping, TerminateOnNaN, LambdaCallback
 from tensorflow.keras import backend as K
 from matplotlib import pyplot as plt
 from PIL import Image
@@ -17,6 +18,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import tensorboard
+from tensorflow.keras.optimizers import Adam, SGD, RMSprop
 
 physical_devices = tf.config.experimental.list_physical_devices('GPU') 
 for physical_device in physical_devices: 
@@ -211,4 +213,40 @@ def darknet53(input_shape, input_tensor, pooling: str = 'avg', include_top: bool
 
     return model
 
+# %%
+def train(args: dict, annotation_file: str, model, input_shape, log_dir: str = 'logs', val_split: float = 0.2, optimiser=Adam(lr=learning_rate, decay=5e-4)):
+    logging = TensorBoard(log_dir=log_dir, histogram_freq=0, write_graph=False, write_grads=False, write_images=False, update_freq='batch')
+    checkpoint = ModelCheckpoint(path.join(log_dir, 'ep{epoch:03d}-loss{loss:.3f}-val_loss{val_loss:.3f}.h5'),
+        monitor='val_loss',
+        verbose=1,
+        save_weights_only=False,
+        save_best_only=True,
+        period=1)
+    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=10, verbose=1, cooldown=0, min_lr=1e-10)
+    early_stopping = EarlyStopping(monitor='val_loss', min_delta=0, patience=50, verbose=1)
+    terminate_on_nan = TerminateOnNaN()
+    
+    callbacks = [logging, checkpoint, reduce_lr, early_stopping, terminate_on_nan]
+    # TODO: create data handler
+    dataset = get_dataset(annotation_file)
+    val_split = val_split
+    num_val = int(len(dataset)*val_split)
+    num_train = len(dataset) - num_val
+    # data generator
+
+    # TODO create yolo3 definition
+    get_train_model = get_yolo3_train_model
+    data_generator = yolo3_data_generator_wrapper
+
+    # TODO: create Eval callback
+    eval_callback = EvalCallBack(args.model_type, dataset[num_train:], args['anchors'], args['class_names'], args['model_image_size'], args['model_pruning'], log_dir, eval_epoch_interval=args['eval_epoch_interval'], save_eval_checkpoint=args['save_eval_checkpoint'])
+    callbacks += [eval_callback]
+
+    # TODO create model pruning callback and pruning end step
+
+    model = get_train_model(args.model_type, args['anchors'], args['num_classes'], weights_path=args.weights_path, freeze_level=freeze_level, optimizer=optimiser, label_smoothing=args['label_smoothing'], model_pruning=args['model_pruning'], pruning_end_step=pruning_end_step)
+    model.summary()
+
+    
+    pass
 # %%
