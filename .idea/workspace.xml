@@ -2,9 +2,17 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="3e1baee4-a95e-45c4-b479-62a2b6544cdf" name="Default Changelist" comment="">
+      <change afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/other.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/data/StitchMICE_FoFcr16_1_1012_CP_FINAL.tif" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/data/StitchMICE_FoFcr16_2_1024_CP_FINAL.tif" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/data/image_handler.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/.gitignore" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/CS5099-SealCounting.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/CS5099-SealCounting.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.vscode/settings.json" beforeDir="false" afterPath="$PROJECT_DIR$/.vscode/settings.json" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/notebooks/data_expoloration/explore.ipynb" beforeDir="false" afterPath="$PROJECT_DIR$/notebooks/data_expoloration/explore.ipynb" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/notebooks/resnet/resnet.ipynb" beforeDir="false" afterPath="$PROJECT_DIR$/notebooks/resnet/resnet.ipynb" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -31,17 +39,65 @@
   <component name="PropertiesComponent">
     <property name="RunOnceActivity.OpenProjectViewOnStart" value="true" />
     <property name="RunOnceActivity.ShowReadmeOnStart" value="true" />
+    <property name="SHARE_PROJECT_CONFIGURATION_FILES" value="true" />
     <property name="WebServerToolWindowFactoryState" value="false" />
-    <property name="last_opened_file_path" value="$USER_HOME$/thanos/CS5099-working-copy" />
-    <property name="settings.editor.selected.configurable" value="org.jetbrains.plugins.notebooks.jupyter.connections.configuration.JupyterServerConfigurable" />
+    <property name="last_opened_file_path" value="$PROJECT_DIR$/data" />
+    <property name="settings.editor.selected.configurable" value="com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable" />
   </component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
       <recent name="$PROJECT_DIR$/notebooks" />
       <recent name="$PROJECT_DIR$" />
     </key>
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/data" />
+    </key>
   </component>
-  <component name="RunManager">
+  <component name="RunManager" selected="Python.image_handler">
+    <configuration name="ImageSplitv2" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="CS5099-SealCounting" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/data" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/data/ImageSplitv2.py" />
+      <option name="PARAMETERS" value="$PROJECT_DIR$/data/StitchMICE_FoFcr16_2_1024_CP_FINAL.tif 416 416" />
+      <option name="SHOW_COMMAND_LINE" value="true" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <configuration default="true" type="PythonConfigurationType" factoryName="Python">
+      <module name="CS5099-SealCounting" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="" />
+      <option name="IS_MODULE_SDK" value="false" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="SCRIPT_NAME" value="" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="true" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
     <configuration name="environment_check" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="CS5099-SealCounting" />
       <option name="INTERPRETER_OPTIONS" value="" />
@@ -64,8 +120,37 @@
       <option name="INPUT_FILE" value="" />
       <method v="2" />
     </configuration>
+    <configuration name="image_handler" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="CS5099-SealCounting" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/data" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/data/image_handler.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="true" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <list>
+      <item itemvalue="Python.environment_check" />
+      <item itemvalue="Python.image_handler" />
+      <item itemvalue="Python.ImageSplitv2" />
+    </list>
     <recent_temporary>
       <list>
+        <item itemvalue="Python.image_handler" />
+        <item itemvalue="Python.ImageSplitv2" />
         <item itemvalue="Python.environment_check" />
       </list>
     </recent_temporary>
@@ -85,6 +170,10 @@
       <workItem from="1592512914677" duration="979000" />
       <workItem from="1592555901226" duration="3959000" />
       <workItem from="1592641415673" duration="433000" />
+      <workItem from="1593074141315" duration="257000" />
+      <workItem from="1593074552469" duration="18322000" />
+      <workItem from="1593159470249" duration="2451000" />
+      <workItem from="1593166276435" duration="15390000" />
     </task>
     <servers />
   </component>
@@ -96,50 +185,55 @@
       <screen x="0" y="27" width="1920" height="1053" />
     </state>
     <state x="567" y="213" width="800" height="675" key="#Deployment/0.27.1920.1053@0.27.1920.1053" timestamp="1592469666397" />
-    <state x="418" y="211" key="#com.intellij.execution.impl.EditConfigurationsDialog" timestamp="1592469186098">
+    <state x="418" y="254" key="#com.intellij.execution.impl.EditConfigurationsDialog" timestamp="1593160168441">
       <screen x="0" y="27" width="1920" height="1053" />
     </state>
-    <state x="418" y="211" key="#com.intellij.execution.impl.EditConfigurationsDialog/0.27.1920.1053@0.27.1920.1053" timestamp="1592469186098" />
-    <state x="265" y="311" width="424" height="482" key="FileChooserDialogImpl" timestamp="1592428635852">
-      <screen x="0" y="27" width="3840" height="1053" />
+    <state x="418" y="254" key="#com.intellij.execution.impl.EditConfigurationsDialog/0.27.1920.1053@0.27.1920.1053" timestamp="1593160168441" />
+    <state x="681" y="462" width="631" height="520" key="#xdebugger.evaluate" timestamp="1593193863930">
+      <screen x="0" y="27" width="1920" height="1053" />
     </state>
+    <state x="681" y="462" width="631" height="520" key="#xdebugger.evaluate/0.27.1920.1053@0.27.1920.1053" timestamp="1593193863930" />
+    <state x="133" y="311" width="306" height="480" key="FileChooserDialogImpl" timestamp="1593076536081">
+      <screen x="0" y="27" width="1920" height="1053" />
+    </state>
+    <state x="133" y="311" width="306" height="480" key="FileChooserDialogImpl/0.27.1920.1053@0.27.1920.1053" timestamp="1593076536081" />
     <state x="265" y="311" width="424" height="482" key="FileChooserDialogImpl/0.27.3840.1053@0.27.3840.1053" timestamp="1592428635852" />
-    <state width="1862" height="339" key="GridCell.Tab.0.bottom" timestamp="1592641720980">
+    <state width="1862" height="234" key="GridCell.Tab.0.bottom" timestamp="1593193901162">
       <screen x="0" y="27" width="1920" height="1053" />
     </state>
-    <state width="1862" height="339" key="GridCell.Tab.0.bottom/0.27.1920.1053@0.27.1920.1053" timestamp="1592641720979" />
-    <state width="1862" height="339" key="GridCell.Tab.0.center" timestamp="1592641720978">
+    <state width="1862" height="234" key="GridCell.Tab.0.bottom/0.27.1920.1053@0.27.1920.1053" timestamp="1593193901162" />
+    <state width="1862" height="234" key="GridCell.Tab.0.center" timestamp="1593193901161">
       <screen x="0" y="27" width="1920" height="1053" />
     </state>
-    <state width="1862" height="339" key="GridCell.Tab.0.center/0.27.1920.1053@0.27.1920.1053" timestamp="1592641720978" />
-    <state width="1862" height="339" key="GridCell.Tab.0.left" timestamp="1592641720976">
+    <state width="1862" height="234" key="GridCell.Tab.0.center/0.27.1920.1053@0.27.1920.1053" timestamp="1593193901161" />
+    <state width="1862" height="234" key="GridCell.Tab.0.left" timestamp="1593193901160">
       <screen x="0" y="27" width="1920" height="1053" />
     </state>
-    <state width="1862" height="339" key="GridCell.Tab.0.left/0.27.1920.1053@0.27.1920.1053" timestamp="1592641720976" />
-    <state width="1862" height="339" key="GridCell.Tab.0.right" timestamp="1592641720979">
+    <state width="1862" height="234" key="GridCell.Tab.0.left/0.27.1920.1053@0.27.1920.1053" timestamp="1593193901160" />
+    <state width="1862" height="234" key="GridCell.Tab.0.right" timestamp="1593193901162">
       <screen x="0" y="27" width="1920" height="1053" />
     </state>
-    <state width="1862" height="339" key="GridCell.Tab.0.right/0.27.1920.1053@0.27.1920.1053" timestamp="1592641720979" />
-    <state width="1862" height="339" key="GridCell.Tab.1.bottom" timestamp="1592641720508">
+    <state width="1862" height="234" key="GridCell.Tab.0.right/0.27.1920.1053@0.27.1920.1053" timestamp="1593193901162" />
+    <state width="1862" height="234" key="GridCell.Tab.1.bottom" timestamp="1593193901164">
       <screen x="0" y="27" width="1920" height="1053" />
     </state>
-    <state width="1862" height="339" key="GridCell.Tab.1.bottom/0.27.1920.1053@0.27.1920.1053" timestamp="1592641720508" />
-    <state width="1862" height="339" key="GridCell.Tab.1.center" timestamp="1592641720507">
+    <state width="1862" height="234" key="GridCell.Tab.1.bottom/0.27.1920.1053@0.27.1920.1053" timestamp="1593193901164" />
+    <state width="1862" height="234" key="GridCell.Tab.1.center" timestamp="1593193901163">
       <screen x="0" y="27" width="1920" height="1053" />
     </state>
-    <state width="1862" height="339" key="GridCell.Tab.1.center/0.27.1920.1053@0.27.1920.1053" timestamp="1592641720507" />
-    <state width="1862" height="339" key="GridCell.Tab.1.left" timestamp="1592641720506">
+    <state width="1862" height="234" key="GridCell.Tab.1.center/0.27.1920.1053@0.27.1920.1053" timestamp="1593193901163" />
+    <state width="1862" height="234" key="GridCell.Tab.1.left" timestamp="1593193901163">
       <screen x="0" y="27" width="1920" height="1053" />
     </state>
-    <state width="1862" height="339" key="GridCell.Tab.1.left/0.27.1920.1053@0.27.1920.1053" timestamp="1592641720506" />
-    <state width="1862" height="339" key="GridCell.Tab.1.right" timestamp="1592641720507">
+    <state width="1862" height="234" key="GridCell.Tab.1.left/0.27.1920.1053@0.27.1920.1053" timestamp="1593193901163" />
+    <state width="1862" height="234" key="GridCell.Tab.1.right" timestamp="1593193901164">
       <screen x="0" y="27" width="1920" height="1053" />
     </state>
-    <state width="1862" height="339" key="GridCell.Tab.1.right/0.27.1920.1053@0.27.1920.1053" timestamp="1592641720507" />
-    <state x="464" y="188" key="SettingsEditor" timestamp="1592641333202">
+    <state width="1862" height="234" key="GridCell.Tab.1.right/0.27.1920.1053@0.27.1920.1053" timestamp="1593193901164" />
+    <state x="464" y="188" key="SettingsEditor" timestamp="1593099620850">
       <screen x="0" y="27" width="1920" height="1053" />
     </state>
-    <state x="464" y="188" key="SettingsEditor/0.27.1920.1053@0.27.1920.1053" timestamp="1592641333202" />
+    <state x="464" y="188" key="SettingsEditor/0.27.1920.1053@0.27.1920.1053" timestamp="1593099620850" />
     <state x="726" y="245" width="458" height="614" key="com.intellij.openapi.editor.actions.MultiplePasteAction$ClipboardContentChooser" timestamp="1592468866439">
       <screen x="0" y="27" width="1920" height="1053" />
     </state>
@@ -148,6 +242,10 @@
       <screen x="0" y="27" width="1920" height="1053" />
     </state>
     <state x="932" y="309" width="380" height="550" key="ftp.server.browser/0.27.1920.1053@0.27.1920.1053" timestamp="1592468621613" />
+    <state x="623" y="263" width="672" height="678" key="search.everywhere.popup" timestamp="1593193934235">
+      <screen x="0" y="27" width="1920" height="1053" />
+    </state>
+    <state x="623" y="263" width="672" height="678" key="search.everywhere.popup/0.27.1920.1053@0.27.1920.1053" timestamp="1593193934235" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
@@ -159,8 +257,15 @@
         </line-breakpoint>
       </breakpoints>
     </breakpoint-manager>
+    <watches-manager>
+      <configuration name="PythonConfigurationType">
+        <watch expression="list(zip(result_widths, result_heights))" language="Python" />
+      </configuration>
+    </watches-manager>
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
+    <SUITE FILE_PATH="coverage/CS5099_SealCounting$image_handler.coverage" NAME="image_handler Coverage Results" MODIFIED="1593192491942" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/data" />
+    <SUITE FILE_PATH="coverage/CS5099_SealCounting$ImageSplitv2.coverage" NAME="ImageSplitv2 Coverage Results" MODIFIED="1593168037201" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/data" />
     <SUITE FILE_PATH="coverage/CS5099_SealCounting$environment_check.coverage" NAME="environment_check Coverage Results" MODIFIED="1592469846024" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
   </component>
 </project>
