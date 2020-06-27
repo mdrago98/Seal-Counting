@@ -177,7 +177,7 @@ def darknet53(input_shape, input_tensor, pooling: str = 'avg', include_top: bool
     if not (weights in ('imagenet', None) or path.exists(weights)):
         raise ValueError('The `weights` argument should be either '
                          '`None` (random initialization), `imagenet` '
-                         '(pre-training on ImageNet), '
+                         '(pre-training on ImageNet),'
                          'or the path to the weights file to be loaded.')
     if weights == 'imagenet' and include_top and classes != 1000:
         raise ValueError('Classes should be 1000 when using imagenet')

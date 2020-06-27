@@ -247,6 +247,5 @@ def train(args: dict, annotation_file: str, model, input_shape, log_dir: str = '
     model = get_train_model(args.model_type, args['anchors'], args['num_classes'], weights_path=args.weights_path, freeze_level=freeze_level, optimizer=optimiser, label_smoothing=args['label_smoothing'], model_pruning=args['model_pruning'], pruning_end_step=pruning_end_step)
     model.summary()
 
-    
     pass
 # %%
