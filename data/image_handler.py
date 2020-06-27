@@ -85,7 +85,7 @@ def crop(original_image, intervals: tuple, seal_loc: DataFrame) -> list:
 if __name__ == '__main__':
     locations = read_excel('pixel_coord.xlsx', sheet_name='PixelCoordinates')[['tiff_file', 'layer_name', 'x_pixel',
                                                                                'y_pixel']]
-    filename = '/home/drago/PycharmProjects/CS5099-SealCounting/data/StitchMICE_FoFcr16_2_1024_CP_FINAL.tif'
+    filename = '../data/StitchMICE_FoFcr16_2_1024_CP_FINAL.tif'
     im = Image.open(filename)
     im = im.crop((0, 0, 40, 40))
     im.load()

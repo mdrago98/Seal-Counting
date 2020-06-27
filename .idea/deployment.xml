@@ -5,7 +5,7 @@
       <paths name="md273@thanos:22 key">
         <serverdata>
           <mappings>
-            <mapping deploy="/home/md273/CS5099-working-copy" local="$PROJECT_DIR$" />
+            <mapping deploy="/home/drago/tmp/" local="$PROJECT_DIR$" />
           </mappings>
         </serverdata>
       </paths>
