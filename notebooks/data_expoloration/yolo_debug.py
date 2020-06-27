@@ -239,12 +239,12 @@ def train(args: dict, annotation_file: str, model, input_shape, log_dir: str = '
     data_generator = yolo3_data_generator_wrapper
 
     # TODO: create Eval callback
-    eval_callback = EvalCallBack(args.model_type, dataset[num_train:], args['anchors'], args['class_names'], args['model_image_size'], args['model_pruning'], log_dir, eval_epoch_interval=args['eval_epoch_interval'], save_eval_checkpoint=args['save_eval_checkpoint'])
-    callbacks += [eval_callback]
+    # eval_callback = EvalCallBack(args.model_type, dataset[num_train:], args['anchors'], args['class_names'], args['model_image_size'], args['model_pruning'], log_dir, eval_epoch_interval=args['eval_epoch_interval'], save_eval_checkpoint=args['save_eval_checkpoint'])
+    # callbacks += [eval_callback]
 
     # TODO create model pruning callback and pruning end step
 
-    model = get_train_model(args.model_type, args['anchors'], args['num_classes'], weights_path=args.weights_path, freeze_level=freeze_level, optimizer=optimiser, label_smoothing=args['label_smoothing'], model_pruning=args['model_pruning'], pruning_end_step=pruning_end_step)
+    model = get_train_model(args.model_type, args['anchors'], args['num_classes'], weights_path=args.weights_path, freeze_level=args['freeze_level'], optimizer=optimiser, label_smoothing=args['label_smoothing'], model_pruning=args['model_pruning'], pruning_end_step=pruning_end_step)
     model.summary()
 
     pass
