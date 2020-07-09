@@ -1,7 +1,7 @@
 import plac
 from os import path, listdir
 from glob import glob
-from image_handler import crop, extract_intervals
+from .image_handler import crop, extract_intervals
 from pandas import DataFrame, read_excel, concat
 from PIL import Image
 from typing import Generator
