@@ -1,0 +1,25 @@
+{
+    "Tree": {
+        "Tree Tag": "annotation",
+        "Folder": "folder",
+        "Filename": "filename",
+        "Path": "path"
+    },
+    "Size": {
+        "Size Tag": "size",
+        "Width": "width",
+        "Height": "height",
+        "Depth": "depth"
+    },
+    "Object": {
+        "Object Tag": "object",
+        "Object Name": "name",
+        "Object Box": {
+            "Object Box Tag": "bndbox",
+            "X0": "xmin",
+            "Y0": "ymin",
+            "X1": "xmax",
+            "Y1": "ymax"
+        }
+    }
+}
