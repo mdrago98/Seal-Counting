@@ -1,15 +1,12 @@
 from collections import namedtuple
-from functools import partial
 from os import path
 from random import randint
 from typing import Callable
 from numpy import array, int64, random
 
 import tensorflow as tf
-from pandas import DataFrame, read_csv, read_excel
+from pandas import DataFrame, read_excel
 from PIL import Image
-from tensorflow import data as tf_data
-from tensorflow.python.data.ops.dataset_ops import AUTOTUNE
 from pathlib import Path
 
 from tqdm import tqdm
@@ -114,7 +111,7 @@ def get_seal_cropping_region(
 
 
 def clean_data(
-    data: DataFrame, columns: list = None, pipeline: list = None, drop_na: bool = True
+    dataset: DataFrame, columns: list = None, pipeline: list = None, drop_na: bool = True
 ) -> DataFrame:
     """
     A function that cleans the dataframe.
@@ -130,7 +127,7 @@ def clean_data(
         pipeline = PIPELINE
     if columns is None:
         columns = ["tiff_file", "layer_name", "x_pixel", "y_pixel", "image_width", "image_height"]
-    dataset = data[columns]
+    dataset = dataset[columns]
     if drop_na:
         dataset = dataset.copy().dropna()
     for column_name, transformation in pipeline:
@@ -274,29 +271,6 @@ def split(dataset: DataFrame, group_key: str) -> list:
     return [data(filename, gb.get_group(x)) for filename, x in zip(gb.groups.keys(), gb.groups)]
 
 
-def main():
-    locations = read_excel(
-        "/home/md273/CS5099-working-copy/data"
-        "/PixelCoordinates_HgPupCounts2016_VersionToUse_20181017-1.xlsx",
-        sheet_name="PixelCoordinates",
-    )
-    file_props = read_excel(
-        "/home/md273/CS5099-working-copy/data/pixel_coord.xlsx", sheet_name="FileOverview",
-    ).dropna()
-    locations = locations.merge(
-        file_props[["tiff_file", "image_width", "image_height"]], how="inner"
-    )
-    locations = clean_data(locations)
-    locations = generate_object_bbox(locations, (416, 416))
-    msk = random.rand(len(locations)) < 0.8
-    train = locations[msk]
-    test = locations[~msk]
-    logger.info(f"Cleaned the dataset generating tf_records")
-    # TODO convert to flag
-    # write_to_record(train, "/data2/seals/tfrecords", train)
-    write_to_record(test, "/data2/seals/tfrecords", "test")
-
-
 def write_to_record(dataset: DataFrame, output_dir: str, name: str, size: tuple = (416, 416)):
     """
     A function to write the dataset to tf records
@@ -318,6 +292,54 @@ def write_to_record(dataset: DataFrame, output_dir: str, name: str, size: tuple 
             writer.write(converted.SerializeToString())
     writer.flush()
     writer.close()
+
+
+def create_output_dir(output_dir: str, image_size: int) -> str:
+    """
+    A function that checks the output dir and prepares it for  any modifications.
+    :param output_dir: the output directory
+    :param image_size: the image size
+    :return: the fully formed output path
+    """
+    output_path = path.join(output_dir, str(image_size))
+    Path(output_path).mkdir(parents=True, exist_ok=True)
+    return output_path
+
+
+def write_classes(output_dir, classes: list, name="classes.txt"):
+    output_dir = path.join(output_dir, name)
+    logger.info(f"Writing classes to {output_dir}")
+    with open(output_dir, "a") as file:
+        logger.info("Writing class names to")
+        file.write("\n".join(classes))
+    return True
+
+
+def main(out_size=(416 * 2, 416 * 2)):
+    output_dir = create_output_dir("/data2/seals/tfrecords", out_size[0])
+    locations = read_excel(
+        "/home/md273/CS5099-working-copy/data"
+        "/PixelCoordinates_HgPupCounts2016_VersionToUse_20181017-1.xlsx",
+        sheet_name="PixelCoordinates",
+    )
+    file_props = read_excel(
+        "/home/md273/CS5099-working-copy/data/pixel_coord.xlsx", sheet_name="FileOverview",
+    ).dropna()
+    locations = locations.merge(
+        file_props[["tiff_file", "image_width", "image_height"]], how="inner"
+    )
+    write_classes(output_dir, list(locations["layer_name"].dropna().unique()))
+    locations = clean_data(locations)
+    locations = generate_object_bbox(locations, out_size)
+    msk = random.rand(len(locations)) < 0.8
+    train = locations[msk]
+    test = locations[~msk]
+    logger.info(f"Cleaned the dataset generating tf_records")
+    # TODO convert to flag
+    logger.info("Generating training records")
+    write_to_record(train, "/data2/seals/tfrecords", "train", size=out_size)
+    logger.info("Generating testing records")
+    write_to_record(test, "/data2/seals/tfrecords", "test", size=out_size)
 
 
 main()

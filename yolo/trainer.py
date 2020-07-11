@@ -1,11 +1,8 @@
-from logging import Logger
-
 import tensorflow as tf
 import os
 import numpy as np
 import pandas as pd
 from pathlib import Path
-import sys
 
 from tensorflow.keras.callbacks import (
     ReduceLROnPlateau,
@@ -15,19 +12,16 @@ from tensorflow.keras.callbacks import (
     EarlyStopping,
 )
 import shutil
-from Helpers.dataset_handlers import read_tfr, save_tfr, get_feature_map
-from Helpers.annotation_parsers import parse_voc_folder
-from utils.anchors import k_means, generate_anchors
-from utils.utils import get_logger
-from .yolo import BaseModel
-from Helpers.utils import transform_images, transform_targets
-from Helpers.annotation_parsers import adjust_non_voc_csv
-from yolo.utils.layer_utils import calculate_loss, timer, default_logger, activate_gpu
-from yolo.evaluation import Evaluator
-
-sys.path.append('..')
-
-logger: Logger = get_logger()
+from helpers.dataset_handlers import read_tfr, save_tfr, get_feature_map
+from helpers.annotation_parsers import parse_voc_folder
+from helpers.anchors import k_means, generate_anchors
+from helpers.augmentor import DataAugment
+from config.augmentation_options import augmentations
+from .models import BaseModel
+from helpers.utils import transform_images, transform_targets
+from helpers.annotation_parsers import adjust_non_voc_csv
+from helpers.utils import calculate_loss, timer, default_logger, activate_gpu
+from .evaluator import Evaluator
 
 
 class Trainer(BaseModel):
@@ -36,19 +30,19 @@ class Trainer(BaseModel):
     """
 
     def __init__(
-            self,
-            input_shape,
-            model_configuration,
-            classes_file,
-            image_width,
-            image_height,
-            train_tf_record=None,
-            valid_tf_record=None,
-            anchors=None,
-            masks=None,
-            max_boxes=100,
-            iou_threshold=0.5,
-            score_threshold=0.5,
+        self,
+        input_shape,
+        model_configuration,
+        classes_file,
+        image_width,
+        image_height,
+        train_tf_record=None,
+        valid_tf_record=None,
+        anchors=None,
+        masks=None,
+        max_boxes=100,
+        iou_threshold=0.5,
+        score_threshold=0.5,
     ):
         """
         Initialize training.
@@ -63,9 +57,7 @@ class Trainer(BaseModel):
             score_threshold: float, values less than the threshold are ignored.
         """
         self.classes_file = classes_file
-        self.class_names = [
-            item.strip() for item in open(classes_file).readlines()
-        ]
+        self.class_names = [item.strip() for item in open(classes_file).readlines()]
         super().__init__(
             input_shape,
             model_configuration,
@@ -78,9 +70,7 @@ class Trainer(BaseModel):
         )
         self.train_tf_record = train_tf_record
         self.valid_tf_record = valid_tf_record
-        self.image_folder = (
-            Path(os.path.join('..', 'Data', 'Photos')).absolute().resolve()
-        )
+        self.image_folder = Path(os.path.join("", "Data", "Photos")).absolute().resolve()
         self.image_width = image_width
         self.image_height = image_height
 
@@ -98,30 +88,28 @@ class Trainer(BaseModel):
         """
         labels_frame = None
         check = 0
-        if configuration.get('relative_labels'):
+        if configuration.get("relative_labels"):
             labels_frame = adjust_non_voc_csv(
-                configuration['relative_labels'],
+                configuration["relative_labels"],
                 self.image_folder,
                 self.image_width,
                 self.image_height,
             )
             check += 1
-        if configuration.get('from_xml'):
+        if configuration.get("from_xml"):
             if check:
-                raise ValueError(f'Got more than one configuration')
+                raise ValueError(f"Got more than one configuration")
             labels_frame = parse_voc_folder(
-                os.path.join('..', 'Data', 'XML Labels'),
-                os.path.join('..', 'Config', 'voc_conf.json'),
+                os.path.join("", "Data", "XML Labels"), os.path.join("", "Config", "voc_conf.json"),
             )
             labels_frame.to_csv(
-                os.path.join('..', 'Output', 'Data', 'parsed_from_xml.csv'),
-                index=False,
+                os.path.join("", "Output", "Data", "parsed_from_xml.csv"), index=False,
             )
             check += 1
-        if configuration.get('coordinate_labels'):
+        if configuration.get("coordinate_labels"):
             if check:
-                raise ValueError(f'Got more than one configuration')
-            labels_frame = pd.read_csv(configuration['coordinate_labels'])
+                raise ValueError(f"Got more than one configuration")
+            labels_frame = pd.read_csv(configuration["coordinate_labels"])
             check += 1
         return labels_frame
 
@@ -140,24 +128,18 @@ class Trainer(BaseModel):
         Returns:
             None
         """
-        anchor_no = new_anchors_conf.get('anchor_no')
+        anchor_no = new_anchors_conf.get("anchor_no")
         if not anchor_no:
             raise ValueError(f'No "anchor_no" found in new_anchors_conf')
         labels_frame = self.get_adjusted_labels(new_anchors_conf)
         relative_dims = np.array(
-            list(
-                zip(
-                    labels_frame['Relative Width'],
-                    labels_frame['Relative Height'],
-                )
-            )
+            list(zip(labels_frame["Relative Width"], labels_frame["Relative Height"],))
         )
         centroids, _ = k_means(relative_dims, anchor_no, frame=labels_frame)
         self.anchors = (
-                generate_anchors(self.image_width, self.image_height, centroids)
-                / self.input_shape[0]
+            generate_anchors(self.image_width, self.image_height, centroids) / self.input_shape[0]
         )
-        default_logger.info('Changed default anchors to generated ones')
+        default_logger.info("Changed default anchors to generated ones")
 
     def generate_new_frame(self, new_dataset_conf):
         """
@@ -167,10 +149,10 @@ class Trainer(BaseModel):
             pandas DataFrame adjusted for building the dataset containing
             labels or labels and augmented labels combined
         """
-        if not new_dataset_conf.get('dataset_name'):
-            raise ValueError('dataset_name not found in new_dataset_conf')
+        if not new_dataset_conf.get("dataset_name"):
+            raise ValueError("dataset_name not found in new_dataset_conf")
         labels_frame = self.get_adjusted_labels(new_dataset_conf)
-        if new_dataset_conf.get('augmentation'):
+        if new_dataset_conf.get("augmentation"):
             labels_frame = self.augment_photos(new_dataset_conf)
         return labels_frame
 
@@ -185,58 +167,52 @@ class Trainer(BaseModel):
         Returns:
             dataset.
         """
-        dataset = read_tfr(
-            tf_record, self.classes_file, get_feature_map(), self.max_boxes
-        )
+        dataset = read_tfr(tf_record, self.classes_file, get_feature_map(), self.max_boxes)
         dataset = dataset.shuffle(shuffle_buffer)
         dataset = dataset.batch(batch_size)
         dataset = dataset.map(
             lambda x, y: (
                 transform_images(x, self.input_shape[0]),
-                transform_targets(
-                    y, self.anchors, self.masks, self.input_shape[0]
-                ),
+                transform_targets(y, self.anchors, self.masks, self.input_shape[0]),
             )
         )
         dataset = dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
         return dataset
 
-    # @staticmethod
-    # def augment_photos(new_dataset_conf):
-    #     """
-    #     Augment photos in self.image_paths
-    #     Args:
-    #         new_dataset_conf: New dataset configuration dict.
-    #
-    #     Returns:
-    #         pandas DataFrame with both original and augmented data.
-    #     """
-    #     sequences = new_dataset_conf.get('sequences')
-    #     relative_labels = new_dataset_conf.get('relative_labels')
-    #     coordinate_labels = new_dataset_conf.get('coordinate_labels')
-    #     workers = new_dataset_conf.get('aug_workers')
-    #     batch_size = new_dataset_conf.get('aug_batch_size')
-    #     if not sequences:
-    #         raise ValueError(f'"sequences" not found in new_dataset_conf')
-    #     if not relative_labels:
-    #         raise ValueError(f'No "relative_labels" found in new_dataset_conf')
-    #     augment = DataAugment(
-    #         relative_labels, augmentations, workers or 32, coordinate_labels
-    #     )
-    #     augment.create_sequences(sequences)
-    #     return augment.augment_photos_folder(batch_size or 64)
+    @staticmethod
+    def augment_photos(new_dataset_conf):
+        """
+        Augment photos in self.image_paths
+        Args:
+            new_dataset_conf: New dataset configuration dict.
+
+        Returns:
+            pandas DataFrame with both original and augmented data.
+        """
+        sequences = new_dataset_conf.get("sequences")
+        relative_labels = new_dataset_conf.get("relative_labels")
+        coordinate_labels = new_dataset_conf.get("coordinate_labels")
+        workers = new_dataset_conf.get("aug_workers")
+        batch_size = new_dataset_conf.get("aug_batch_size")
+        if not sequences:
+            raise ValueError(f'"sequences" not found in new_dataset_conf')
+        if not relative_labels:
+            raise ValueError(f'No "relative_labels" found in new_dataset_conf')
+        augment = DataAugment(relative_labels, augmentations, workers or 32, coordinate_labels)
+        augment.create_sequences(sequences)
+        return augment.augment_photos_folder(batch_size or 64)
 
     @timer(default_logger)
     def evaluate(
-            self,
-            weights_file,
-            merge,
-            workers,
-            shuffle_buffer,
-            min_overlaps,
-            display_stats=True,
-            plot_stats=True,
-            save_figs=True,
+        self,
+        weights_file,
+        merge,
+        workers,
+        shuffle_buffer,
+        min_overlaps,
+        display_stats=True,
+        plot_stats=True,
+        save_figs=True,
     ):
         """
         Evaluate on training and validation datasets.
@@ -256,7 +232,7 @@ class Trainer(BaseModel):
         Returns:
             stats, map_score.
         """
-        default_logger.info('Starting evaluation ...')
+        default_logger.info("Starting evaluation ...")
         evaluator = Evaluator(
             self.input_shape,
             self.model_configuration,
@@ -269,28 +245,22 @@ class Trainer(BaseModel):
             self.iou_threshold,
             self.score_threshold,
         )
-        predictions = evaluator.make_predictions(
-            weights_file, merge, workers, shuffle_buffer
-        )
+        predictions = evaluator.make_predictions(weights_file, merge, workers, shuffle_buffer)
         if isinstance(predictions, tuple):
             training_predictions, valid_predictions = predictions
             if any([training_predictions.empty, valid_predictions.empty]):
-                default_logger.info(
-                    'Aborting evaluations, no detections found'
-                )
+                default_logger.info("Aborting evaluations, no detections found")
                 return
             training_actual = pd.read_csv(
-                os.path.join('..', 'Data', 'TFRecords', 'training_data.csv')
+                os.path.join("", "Data", "TFRecords", "training_data.csv")
             )
-            valid_actual = pd.read_csv(
-                os.path.join('..', 'Data', 'TFRecords', 'test_data.csv')
-            )
+            valid_actual = pd.read_csv(os.path.join("", "Data", "TFRecords", "test_data.csv"))
             training_stats, training_map = evaluator.calculate_map(
                 training_predictions,
                 training_actual,
                 min_overlaps,
                 display_stats,
-                'Train',
+                "Train",
                 save_figs,
                 plot_stats,
             )
@@ -299,16 +269,14 @@ class Trainer(BaseModel):
                 valid_actual,
                 min_overlaps,
                 display_stats,
-                'Valid',
+                "Valid",
                 save_figs,
                 plot_stats,
             )
             return training_stats, training_map, valid_stats, valid_map
-        actual_data = pd.read_csv(
-            os.path.join('..', 'Data', 'TFRecords', 'full_data.csv')
-        )
+        actual_data = pd.read_csv(os.path.join("", "Data", "TFRecords", "full_data.csv"))
         if predictions.empty:
-            default_logger.info('Aborting evaluations, no detections found')
+            default_logger.info("Aborting evaluations, no detections found")
             return
         stats, map_score = evaluator.calculate_map(
             predictions,
@@ -328,22 +296,16 @@ class Trainer(BaseModel):
         Returns:
             None
         """
-        for folder_name in os.listdir(os.path.join('..', 'Output')):
-            if not folder_name.startswith('.'):
-                full_path = (
-                    Path(os.path.join('..', 'Output', folder_name))
-                        .absolute()
-                        .resolve()
-                )
+        for folder_name in os.listdir(os.path.join("", "Output")):
+            if not folder_name.startswith("."):
+                full_path = Path(os.path.join("", "Output", folder_name)).absolute().resolve()
                 for file_name in os.listdir(full_path):
                     full_file_path = Path(os.path.join(full_path, file_name))
                     if os.path.isdir(full_file_path):
                         shutil.rmtree(full_file_path)
                     else:
                         os.remove(full_file_path)
-                    default_logger.info(
-                        f'Deleted old output: {full_file_path}'
-                    )
+                    default_logger.info(f"Deleted old output: {full_file_path}")
 
     def create_new_dataset(self, new_dataset_conf):
         """
@@ -365,13 +327,13 @@ class Trainer(BaseModel):
                     'Object ID']
                     - from_xml: True or False to parse from XML Labels folder.
         """
-        default_logger.info(f'Generating new dataset ...')
-        test_size = new_dataset_conf.get('test_size')
+        default_logger.info(f"Generating new dataset ...")
+        test_size = new_dataset_conf.get("test_size")
         labels_frame = self.generate_new_frame(new_dataset_conf)
         save_tfr(
             labels_frame,
-            os.path.join('..', 'Data', 'TFRecords'),
-            new_dataset_conf['dataset_name'],
+            os.path.join("", "Data", "TFRecords"),
+            new_dataset_conf["dataset_name"],
             test_size,
             self,
         )
@@ -384,11 +346,11 @@ class Trainer(BaseModel):
             None
         """
         if not self.train_tf_record:
-            issue = 'No training TFRecord specified'
+            issue = "No training TFRecord specified"
             default_logger.error(issue)
             raise ValueError(issue)
         if not self.valid_tf_record:
-            issue = 'No validation TFRecord specified'
+            issue = "No validation TFRecord specified"
             default_logger.error(issue)
             raise ValueError(issue)
 
@@ -404,35 +366,31 @@ class Trainer(BaseModel):
         """
         return [
             ReduceLROnPlateau(verbose=1, patience=4),
-            ModelCheckpoint(
-                os.path.join(checkpoint_path),
-                verbose=1,
-                save_weights_only=True,
-            ),
-            TensorBoard(log_dir=os.path.join('..', 'Logs')),
-            EarlyStopping(monitor='val_loss', patience=6, verbose=1),
+            ModelCheckpoint(os.path.join(checkpoint_path), verbose=1, save_weights_only=True,),
+            TensorBoard(log_dir=os.path.join("", "Logs")),
+            EarlyStopping(monitor="val_loss", patience=6, verbose=1),
         ]
 
     @timer(default_logger)
     def train(
-            self,
-            epochs,
-            batch_size,
-            learning_rate,
-            new_anchors_conf=None,
-            new_dataset_conf=None,
-            dataset_name=None,
-            weights=None,
-            evaluate=True,
-            merge_evaluation=True,
-            evaluation_workers=8,
-            shuffle_buffer=512,
-            min_overlaps=None,
-            display_stats=True,
-            plot_stats=True,
-            save_figs=True,
-            clear_outputs=False,
-            n_epoch_eval=None,
+        self,
+        epochs,
+        batch_size,
+        learning_rate,
+        new_anchors_conf=None,
+        new_dataset_conf=None,
+        dataset_name=None,
+        weights=None,
+        evaluate=True,
+        merge_evaluation=True,
+        evaluation_workers=8,
+        shuffle_buffer=512,
+        min_overlaps=None,
+        display_stats=True,
+        plot_stats=True,
+        save_figs=True,
+        clear_outputs=False,
+        n_epoch_eval=None,
     ):
         """
         Train on the dataset.
@@ -466,9 +424,10 @@ class Trainer(BaseModel):
         if clear_outputs:
             self.clear_outputs()
         activate_gpu()
-        default_logger.info(f'Starting training ...')
+        default_logger.info(f"Starting training ...")
         if new_anchors_conf:
-            default_logger.info(f'Generating new anchors ...')
+            # TODO: add flag to train anchors automatically
+            default_logger.info(f"Generating new anchors ...")
             self.generate_new_anchors(new_anchors_conf)
         self.create_models()
         if weights:
@@ -476,23 +435,15 @@ class Trainer(BaseModel):
         if new_dataset_conf:
             self.create_new_dataset(new_dataset_conf)
         self.check_tf_records()
-        training_dataset = self.initialize_dataset(
-            self.train_tf_record, batch_size, shuffle_buffer
-        )
-        valid_dataset = self.initialize_dataset(
-            self.valid_tf_record, batch_size, shuffle_buffer
-        )
+        training_dataset = self.initialize_dataset(self.train_tf_record, batch_size, shuffle_buffer)
+        valid_dataset = self.initialize_dataset(self.valid_tf_record, batch_size, shuffle_buffer)
         optimizer = tf.keras.optimizers.Adam(learning_rate)
         loss = [
-            calculate_loss(
-                self.anchors[mask], self.classes, self.iou_threshold
-            )
+            calculate_loss(self.anchors[mask], self.classes, self.iou_threshold)
             for mask in self.masks
         ]
         self.training_model.compile(optimizer=optimizer, loss=loss)
-        checkpoint_path = os.path.join(
-            '..', 'Models', f'{dataset_name or "trained"}_model.tf'
-        )
+        checkpoint_path = os.path.join("", "Models", f'{dataset_name or "trained"}_model.tf')
         callbacks = self.create_callbacks(checkpoint_path)
         if n_epoch_eval:
             mid_train_eval = MidTrainingEvaluator(
@@ -520,12 +471,9 @@ class Trainer(BaseModel):
             )
             callbacks.append(mid_train_eval)
         history = self.training_model.fit(
-            training_dataset,
-            epochs=epochs,
-            callbacks=callbacks,
-            validation_data=valid_dataset,
+            training_dataset, epochs=epochs, callbacks=callbacks, validation_data=valid_dataset,
         )
-        default_logger.info('Training complete')
+        default_logger.info("Training complete")
         if evaluate:
             evaluations = self.evaluate(
                 checkpoint_path,
@@ -547,28 +495,28 @@ class MidTrainingEvaluator(Callback, Trainer):
     """
 
     def __init__(
-            self,
-            input_shape,
-            model_configuration,
-            classes_file,
-            image_width,
-            image_height,
-            train_tf_record,
-            valid_tf_record,
-            anchors,
-            masks,
-            max_boxes,
-            iou_threshold,
-            score_threshold,
-            n_epochs,
-            merge,
-            workers,
-            shuffle_buffer,
-            min_overlaps,
-            display_stats,
-            plot_stats,
-            save_figs,
-            weights_file,
+        self,
+        input_shape,
+        model_configuration,
+        classes_file,
+        image_width,
+        image_height,
+        train_tf_record,
+        valid_tf_record,
+        anchors,
+        masks,
+        max_boxes,
+        iou_threshold,
+        score_threshold,
+        n_epochs,
+        merge,
+        workers,
+        shuffle_buffer,
+        min_overlaps,
+        display_stats,
+        plot_stats,
+        save_figs,
+        weights_file,
     ):
         """
         Initialize mid-training evaluation settings.
@@ -640,30 +588,18 @@ class MidTrainingEvaluator(Callback, Trainer):
             return
         self.evaluate(*self.evaluation_args)
         evaluation_dir = str(
-            Path(
-                os.path.join(
-                    '..', 'Output', 'Evaluation', f'epoch-{epoch}-evaluation'
-                )
-            )
-                .absolute()
-                .resolve()
+            Path(os.path.join("", "Output", "Evaluation", f"epoch-{epoch}-evaluation"))
+            .absolute()
+            .resolve()
         )
         os.mkdir(evaluation_dir)
         current_predictions = [
-            str(
-                Path(os.path.join('..', 'Output', 'Data', item))
-                    .absolute()
-                    .resolve()
-            )
-            for item in os.listdir(os.path.join('..', 'Output', 'Data'))
+            str(Path(os.path.join("", "Output", "Data", item)).absolute().resolve())
+            for item in os.listdir(os.path.join("", "Output", "Data"))
         ]
         current_figures = [
-            str(
-                Path(os.path.join('..', 'Output', 'Plots', item))
-                    .absolute()
-                    .resolve()
-            )
-            for item in os.listdir(os.path.join('..', 'Output', 'Plots'))
+            str(Path(os.path.join("", "Output", "Plots", item)).absolute().resolve())
+            for item in os.listdir(os.path.join("", "Output", "Plots"))
         ]
         current_files = current_predictions + current_figures
         for file_path in current_files:
