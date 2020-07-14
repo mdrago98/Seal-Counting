@@ -12,6 +12,9 @@ from tensorflow.keras.callbacks import (
     EarlyStopping,
 )
 import shutil
+
+from typing import Tuple
+
 from helpers.dataset_handlers import read_tfr, save_tfr, get_feature_map
 from helpers.annotation_parsers import parse_voc_folder
 from helpers.anchors import k_means, generate_anchors
@@ -31,18 +34,19 @@ class Trainer(BaseModel):
 
     def __init__(
         self,
-        input_shape,
-        model_configuration,
-        classes_file,
-        image_width,
-        image_height,
-        train_tf_record=None,
-        valid_tf_record=None,
-        anchors=None,
-        masks=None,
-        max_boxes=100,
-        iou_threshold=0.5,
-        score_threshold=0.5,
+        input_shape: Tuple[int, int, int],
+        model_configuration: str,
+        classes_file: str,
+        image_width: int,
+        image_height: int,
+        train_tf_record: str = None,
+        valid_tf_record: str = None,
+        anchors: np.array = None,
+        masks: np.array = None,
+        max_boxes: int = 100,
+        iou_threshold: float = 0.5,
+        score_threshold: float = 0.5,
+        output_path: str = None,
     ):
         """
         Initialize training.
@@ -56,6 +60,10 @@ class Trainer(BaseModel):
             iou_threshold: float, values less than the threshold are ignored.
             score_threshold: float, values less than the threshold are ignored.
         """
+        if output_path is None:
+            self.output_path = os.path.join(os.getcwd(), 'out')
+            default_logger.warn(f'{output_path=}. Saving in {self.output_path=}')
+        self.output_path = Path(output_path or os.getcwd())
         self.classes_file = classes_file
         self.class_names = [item.strip() for item in open(classes_file).readlines()]
         super().__init__(
@@ -70,6 +78,7 @@ class Trainer(BaseModel):
         )
         self.train_tf_record = train_tf_record
         self.valid_tf_record = valid_tf_record
+        # TODO pass parameter
         self.image_folder = Path(os.path.join("", "Data", "Photos")).absolute().resolve()
         self.image_width = image_width
         self.image_height = image_height
@@ -443,7 +452,7 @@ class Trainer(BaseModel):
             for mask in self.masks
         ]
         self.training_model.compile(optimizer=optimizer, loss=loss)
-        checkpoint_path = os.path.join("", "Models", f'{dataset_name or "trained"}_model.tf')
+        checkpoint_path = os.path.join(self.output_path, "models", f'{dataset_name or "trained"}_model.tf')
         callbacks = self.create_callbacks(checkpoint_path)
         if n_epoch_eval:
             mid_train_eval = MidTrainingEvaluator(

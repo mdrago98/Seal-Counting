@@ -1,4 +1,6 @@
+import logging
 from collections import namedtuple
+from io import BytesIO
 from os import path
 from random import randint
 from typing import Callable
@@ -24,9 +26,11 @@ from data.pipeline import PIPELINE
 Image.MAX_IMAGE_PIXELS = 99999999999999999999
 
 logger = tf.get_logger()
+logger.setLevel(logging.INFO)
 
 
 data = namedtuple("data", ["filename", "object"])
+transformed_example = namedtuple("TransformedExample", ["filename", "encoded", "object"])
 
 
 def get_random_crop_coord(
@@ -94,12 +98,13 @@ def get_seal_cropping_region(
     """
     location_frame = location.copy()
     location_frame.dropna()
-
+    y_displacement = size[1] / 2
+    x_displacement = size[0] / 2
     location_frame[f"{y_name}_min"] = location_frame[f"y_pixel"].apply(
-        lambda x: max(x - randint(0, size[1]), 0)
+        lambda x: max(x - y_displacement, 0)
     )
     location_frame[f"{x_name}_min"] = location_frame[f"x_pixel"].apply(
-        lambda x: max(x - randint(0, size[0]), 0)
+        lambda x: max(x - x_displacement, 0)
     )
     location_frame[f"{x_name}_max"] = location_frame[f"{x_name}_min"].apply(
         lambda x: min(x + size[0], location_frame["image_width"].iloc[0])
@@ -166,9 +171,12 @@ def generate_crop_locations(
     return cropping_regions, size_increments
 
 
-def extrapolate_crops_output(image: str, outputs: DataFrame, size: tuple, random_state=42) -> data:
+def extrapolate_crops_output(
+    image: str, outputs: DataFrame, size: tuple, object_bbox: tuple = (60, 60), random_state=42
+) -> data:
     """
     A function to extrapolate the cropped regions and normalise the related coordinates
+    :param object_bbox: the seal bounding box size
     :param outputs: the output dataframe
     :param image: the image file name
     :param size: the resulting size
@@ -183,29 +191,24 @@ def extrapolate_crops_output(image: str, outputs: DataFrame, size: tuple, random
             with Image.open(img_path) as img:
                 # TODO refactor code to crop image using PIL + refactor extrapolate image to
                 #  take one image at a time
-                bounding_box = get_seal_cropping_region(outputs, size).sample(
+                crop_box = get_seal_cropping_region(outputs, size).sample(
                     random_state=random_state
                 )[["x_min", "y_min", "x_max", "y_max",]]
-                bounding_box: BBox = get_bbox(
-                    (bounding_box["x_min"], bounding_box["x_max"]),
-                    (bounding_box["y_min"], bounding_box["y_max"]),
+                crop_box: BBox = get_bbox(
+                    (crop_box["x_min"], crop_box["x_max"]), (crop_box["y_min"], crop_box["y_max"]),
                 )
-                img = img.crop(
-                    (
-                        bounding_box.x_min,
-                        bounding_box.y_min,
-                        bounding_box.x_max,
-                        bounding_box.y_max,
-                    ),
-                )
-                img_tensor = tf.convert_to_tensor(array(img))
+                img = img.crop((crop_box.x_min, crop_box.y_min, crop_box.x_max, crop_box.y_max,),)
+                img_val = BytesIO()
+                img.save(img_val, format="PNG")
             box_filter = outputs[["x_pixel", "y_pixel"]].apply(
-                lambda x: is_in_bounding_box(bounding_box, x), axis=1
+                lambda x: is_in_bounding_box(crop_box, x), axis=1
             )
             outputs = outputs[box_filter]
-            outputs = normalise_coordinates(bounding_box, outputs)
-            # normalise_coordinates(bounding_box, outputs)
-            transformed = data(img_tensor, outputs[box_filter])
+            outputs = normalise_coordinates(crop_box, outputs)
+            outputs = generate_object_bbox(outputs, size, object_bbox)
+            outputs["image_width"] = outputs["image_width"].apply(lambda _: size[0])
+            outputs["image_height"] = outputs["image_height"].apply(lambda _: size[1])
+            transformed = data(img_val.getvalue(), outputs)
         except Exception as e:
             logger.error(e.__str__())
     else:
@@ -214,8 +217,9 @@ def extrapolate_crops_output(image: str, outputs: DataFrame, size: tuple, random
 
 
 def generate_object_bbox(
-    locations: DataFrame, crop_image_size: tuple = (416, 416), bbox_size: tuple = (60, 60)
+    locations: DataFrame, crop_image_size: tuple = (416, 416), bbox_size: tuple = (80, 80)
 ):
+    # TODO: refactor logic to crop the image first and get the bbox afterwards
     locations = locations.copy()
     locations["xmin"] = locations.x_pixel.apply(lambda x: max(x - (bbox_size[0] / 2), 0)).astype(
         int64
@@ -223,11 +227,11 @@ def generate_object_bbox(
     locations["ymin"] = locations.y_pixel.apply(lambda x: max(x - (bbox_size[1] / 2), 0)).astype(
         int64
     )
-    locations["xmax"] = locations.x_pixel.apply(
-        lambda x: min(x + (bbox_size[0] / 2), crop_image_size[0])
+    locations["xmax"] = locations.xmin.apply(
+        lambda x: min(x + bbox_size[0], crop_image_size[0])
     ).astype(int64)
-    locations["ymax"] = locations.y_pixel.apply(
-        lambda x: min(x + (bbox_size[1] / 2), crop_image_size[1])
+    locations["ymax"] = locations.ymin.apply(
+        lambda x: min(x + bbox_size[1], crop_image_size[1])
     ).astype(int64)
     return locations
 
@@ -240,20 +244,32 @@ def convert_to_tf_records(group: data) -> tf.train.Example:
     """
     object = group.object
     image = group.filename
+    height = object["image_height"].iloc[0]
+    width = object["image_width"].iloc[0]
+    xmin = object["xmin"].apply(lambda x: x / width)
+    xmax = object["xmax"].apply(lambda x: x / width)
+    ymin = object["ymin"].apply(lambda x: x / height)
+    ymax = object["ymax"].apply(lambda x: x / height)
     return tf.train.Example(
         features=tf.train.Features(
             feature={
-                "image/height": dataset_util.int64_feature(object["image_height"].iloc[0]),
-                "image/width": dataset_util.int64_feature(object["image_width"].iloc[0]),
+                "image/height": dataset_util.int64_feature(height),
+                "image/width": dataset_util.int64_feature(width),
                 "image/source_id": dataset_util.bytes_feature(object["tiff_file"].iloc[0].encode()),
-                "image/encoded": dataset_util.bytes_feature(image.numpy().tostring()),
+                "image/encoded": dataset_util.bytes_feature(image),
                 "image/format": dataset_util.bytes_feature("tif".encode()),
-                "image/object/bbox/xmin": dataset_util.float_list_feature(object["xmin"].tolist()),
-                "image/object/bbox/xmax": dataset_util.float_list_feature(object["xmax"].tolist()),
-                "image/object/bbox/ymin": dataset_util.float_list_feature(object["ymin"].tolist()),
-                "image/object/bbox/ymax": dataset_util.float_list_feature(object["ymax"].tolist()),
+                "image/object/bbox/xmin": dataset_util.float_list_feature(xmin.tolist()),
+                "image/object/bbox/xmax": dataset_util.float_list_feature(xmax.tolist()),
+                "image/object/bbox/ymin": dataset_util.float_list_feature(ymin.tolist()),
+                "image/object/bbox/ymax": dataset_util.float_list_feature(ymax.tolist()),
                 "image/object/class/label": dataset_util.int64_list_feature(
                     object["layer_name"].tolist()
+                ),
+                "image/object/bbox/x_pixel": dataset_util.float_list_feature(
+                    object["x_pixel"].tolist()
+                ),
+                "image/object/bbox/y_pixel": dataset_util.float_list_feature(
+                    object["y_pixel"].tolist()
                 ),
             }
         )
@@ -278,13 +294,14 @@ def write_to_record(dataset: DataFrame, output_dir: str, name: str, size: tuple 
     :param output_dir: the output directory
     :param name: the name of the tf record
     :param size: the image crop size
-    :return:
+    :return: None
     """
-    output_dir = path.join(output_dir, f"{size[0]}")
+    output_dir = path.join(output_dir, f"{size[0]}")  # TODO: use get path function
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     output_path = path.join(output_dir, f"{name}.tfrecord")
     writer = tf.compat.v1.python_io.TFRecordWriter(output_path)
     grouped_train = split(dataset, "tiff_file")
+    filenames = [filename for filename, _ in grouped_train]
     for image, output in tqdm(grouped_train):
         converted = extrapolate_crops_output(image, output, size)
         if converted is not None:
@@ -315,7 +332,7 @@ def write_classes(output_dir, classes: list, name="classes.txt"):
     return True
 
 
-def main(out_size=(416 * 2, 416 * 2)):
+def main(out_size=(416, 416)):
     output_dir = create_output_dir("/data2/seals/tfrecords", out_size[0])
     locations = read_excel(
         "/home/md273/CS5099-working-copy/data"
@@ -330,7 +347,7 @@ def main(out_size=(416 * 2, 416 * 2)):
     )
     write_classes(output_dir, list(locations["layer_name"].dropna().unique()))
     locations = clean_data(locations)
-    locations = generate_object_bbox(locations, out_size)
+    # locations = generate_object_bbox(locations, out_size)
     msk = random.rand(len(locations)) < 0.8
     train = locations[msk]
     test = locations[~msk]
@@ -342,4 +359,5 @@ def main(out_size=(416 * 2, 416 * 2)):
     write_to_record(test, "/data2/seals/tfrecords", "test", size=out_size)
 
 
-main()
+if __name__ == "__main__":
+    main()
