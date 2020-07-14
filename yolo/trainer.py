@@ -20,14 +20,15 @@ from helpers.annotation_parsers import parse_voc_folder
 from helpers.anchors import k_means, generate_anchors
 from helpers.augmentor import DataAugment
 from config.augmentation_options import augmentations
+from helpers.mixins import LoggerMixin
 from .models import BaseModel
 from helpers.utils import transform_images, transform_targets
 from helpers.annotation_parsers import adjust_non_voc_csv
-from helpers.utils import calculate_loss, timer, default_logger, activate_gpu
+from helpers.utils import calculate_loss, timer, activate_gpu
 from .evaluator import Evaluator
 
 
-class Trainer(BaseModel):
+class Trainer(BaseModel, LoggerMixin):
     """
     Create a training instance.
     """

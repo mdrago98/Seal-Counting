@@ -32,6 +32,7 @@ trainer = Trainer(
     train_tf_record="/data2/seals/tfrecords/back_up/train.tfrecord",
     valid_tf_record="/data2/seals/tfrecords/back_up/test.tfrecord",
     classes_file="/data2/seals/tfrecords/416/classes.txt",
+    output_path="/home/md273/model_zoo/416",
 )
 
 # #%%

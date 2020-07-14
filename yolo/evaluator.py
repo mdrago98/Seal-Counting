@@ -29,6 +29,7 @@ class Evaluator(BaseModel):
         max_boxes=100,
         iou_threshold=0.5,
         score_threshold=0.5,
+        output_path: str = None,
     ):
         """
         Evaluate a trained model.
@@ -74,8 +75,7 @@ class Evaluator(BaseModel):
         Returns:
             pandas DataFrame with detection data.
         """
-        # TODO use the testing data embedded in tf records
-        image_path = bytes.decode(features["image_path"].numpy())
+        image_path = bytes.decode(features["image/source_id"].numpy())
         image_name = os.path.basename(image_path)
         image = tf.expand_dims(image_data, 0)
         resized = transform_images(image, self.input_shape[0])
