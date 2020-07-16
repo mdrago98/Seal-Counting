@@ -1,18 +1,17 @@
-import logging
 from collections import namedtuple
 from io import BytesIO
 from os import path
-from random import randint
+from random import randint, sample
 from typing import Callable
-from numpy import array, int64, random
+from numpy import int64, random
 
 import tensorflow as tf
-from pandas import DataFrame, read_excel
+from pandas import DataFrame, read_excel, concat as pd_concat
 from PIL import Image
 from pathlib import Path
-
+from absl import flags, app, logging as logger
 from tqdm import tqdm
-
+from os import getcwd
 from data import (
     BBox,
     dataset_util,
@@ -23,10 +22,24 @@ from data import (
 )
 from data.pipeline import PIPELINE
 
+
 Image.MAX_IMAGE_PIXELS = 99999999999999999999
 
-logger = tf.get_logger()
-logger.setLevel(logging.INFO)
+# DEFINE the script flags
+
+FLAGS = flags.FLAGS
+
+flags.DEFINE_string(
+    "pixel_coord", path.join(getcwd(), "pixel_coord.xlsx"), "The excel file containing the locations and file sizes"
+)
+flags.DEFINE_string(
+    "output_location",
+    path.join(getcwd(), "output", "tfrecords"),
+    "The output in which to store the output",
+)
+flags.DEFINE_integer("image_size", 416, "The image size to crop to.")
+flags.DEFINE_float("train_size", 0.8, "The size of the training data")
+flags.DEFINE_float("validation", 0.2, "The size of the validation data")
 
 
 data = namedtuple("data", ["filename", "object"])
@@ -173,7 +186,7 @@ def generate_crop_locations(
 
 def extrapolate_crops_output(
     image: str, outputs: DataFrame, size: tuple, object_bbox: tuple = (60, 60), random_state=42
-) -> data:
+) -> list:
     """
     A function to extrapolate the cropped regions and normalise the related coordinates
     :param object_bbox: the seal bounding box size
@@ -181,34 +194,39 @@ def extrapolate_crops_output(
     :param image: the image file name
     :param size: the resulting size
     :param random_state: the random seed to use when randomising crops
-    :return: the data named tuple consisting of the cropped input image tensor and the output
+    :return: the list of data named tuples consisting of the cropped input image tensor and the output
     """
-    transformed = None
+    transformed = []
     # TODO: parameterize path + get absolute path
     img_path = path.join("/data2/seals/TIFFs", image)
     if Path(img_path).exists():
         try:
             with Image.open(img_path) as img:
                 # TODO refactor code to crop image using PIL + refactor extrapolate image to
-                #  take one image at a time
-                crop_box = get_seal_cropping_region(outputs, size).sample(
-                    random_state=random_state
-                )[["x_min", "y_min", "x_max", "y_max",]]
-                crop_box: BBox = get_bbox(
-                    (crop_box["x_min"], crop_box["x_max"]), (crop_box["y_min"], crop_box["y_max"]),
-                )
-                img = img.crop((crop_box.x_min, crop_box.y_min, crop_box.x_max, crop_box.y_max,),)
-                img_val = BytesIO()
-                img.save(img_val, format="PNG")
-            box_filter = outputs[["x_pixel", "y_pixel"]].apply(
-                lambda x: is_in_bounding_box(crop_box, x), axis=1
-            )
-            outputs = outputs[box_filter]
-            outputs = normalise_coordinates(crop_box, outputs)
-            outputs = generate_object_bbox(outputs, size, object_bbox)
-            outputs["image_width"] = outputs["image_width"].apply(lambda _: size[0])
-            outputs["image_height"] = outputs["image_height"].apply(lambda _: size[1])
-            transformed = data(img_val.getvalue(), outputs)
+                #  TODO: iterate over all crops
+                crop_box = get_seal_cropping_region(outputs, size)[
+                    ["x_min", "y_min", "x_max", "y_max"]
+                ]
+                for _, row in crop_box.iterrows():
+                    box: BBox = get_bbox(
+                        (row["x_min"], row["x_max"]), (row["y_min"], row["y_max"]),
+                    )
+                    cropped = img.crop((box.x_min, box.y_min, box.x_max, box.y_max,))
+                    img_val = BytesIO()
+                    cropped.save(img_val, format="PNG")
+                    box_filter = outputs[["x_pixel", "y_pixel"]].apply(
+                        lambda x: is_in_bounding_box(box, x), axis=1
+                    )
+                    transformed_out = outputs[box_filter]
+                    transformed_out = normalise_coordinates(box, transformed_out)
+                    transformed_out = generate_object_bbox(transformed_out, size, object_bbox)
+                    transformed_out["image_width"] = transformed_out["image_width"].apply(
+                        lambda _: size[0]
+                    )
+                    transformed_out["image_height"] = transformed_out["image_height"].apply(
+                        lambda _: size[1]
+                    )
+                    transformed += [data(img_val.getvalue(), transformed_out)]
         except Exception as e:
             logger.error(e.__str__())
     else:
@@ -296,17 +314,21 @@ def write_to_record(dataset: DataFrame, output_dir: str, name: str, size: tuple 
     :param size: the image crop size
     :return: None
     """
-    output_dir = path.join(output_dir, f"{size[0]}")  # TODO: use get path function
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
     output_path = path.join(output_dir, f"{name}.tfrecord")
     writer = tf.compat.v1.python_io.TFRecordWriter(output_path)
-    grouped_train = split(dataset, "tiff_file")
+    grouped_train = sample(split(dataset, "tiff_file"), 10)
     filenames = [filename for filename, _ in grouped_train]
+    all_data = DataFrame()
     for image, output in tqdm(grouped_train):
         converted = extrapolate_crops_output(image, output, size)
         if converted is not None:
-            converted = convert_to_tf_records(converted)
-            writer.write(converted.SerializeToString())
+            all_data = pd_concat([all_data, *[data.object for data in converted]])
+            for converted_object in converted:
+                tf_example = convert_to_tf_records(converted_object)
+                writer.write(tf_example.SerializeToString())
+    all_records_path = path.join(output_dir, f"{size[0]}_{name}_all_records.csv")
+    logger.info(f"Writing all normalised records to {all_records_path=}")
+    all_data.to_csv(path.join(output_dir, f"{size[0]}_{name}_all_records.csv"))
     writer.flush()
     writer.close()
 
@@ -332,32 +354,31 @@ def write_classes(output_dir, classes: list, name="classes.txt"):
     return True
 
 
-def main(out_size=(416, 416)):
-    output_dir = create_output_dir("/data2/seals/tfrecords", out_size[0])
+def main(argv: list):
+    # TODO: add flag for validation dataset
+    out_size = (FLAGS.image_size, FLAGS.image_size)
+    output_dir = create_output_dir(FLAGS.output_location, FLAGS.image_size)
     locations = read_excel(
-        "/home/md273/CS5099-working-copy/data"
-        "/PixelCoordinates_HgPupCounts2016_VersionToUse_20181017-1.xlsx",
+        FLAGS.pixel_coord,
         sheet_name="PixelCoordinates",
     )
     file_props = read_excel(
-        "/home/md273/CS5099-working-copy/data/pixel_coord.xlsx", sheet_name="FileOverview",
+        FLAGS.pixel_coord, sheet_name="FileOverview",
     ).dropna()
     locations = locations.merge(
         file_props[["tiff_file", "image_width", "image_height"]], how="inner"
     )
     write_classes(output_dir, list(locations["layer_name"].dropna().unique()))
     locations = clean_data(locations)
-    # locations = generate_object_bbox(locations, out_size)
-    msk = random.rand(len(locations)) < 0.8
+    msk = random.rand(len(locations)) < FLAGS.train_size
     train = locations[msk]
     test = locations[~msk]
     logger.info(f"Cleaned the dataset generating tf_records")
-    # TODO convert to flag
     logger.info("Generating training records")
-    write_to_record(train, "/data2/seals/tfrecords", "train", size=out_size)
+    write_to_record(train, FLAGS.output_location, "train", size=out_size)
     logger.info("Generating testing records")
-    write_to_record(test, "/data2/seals/tfrecords", "test", size=out_size)
+    write_to_record(test, FLAGS.output_location, "test", size=out_size)
 
 
 if __name__ == "__main__":
-    main()
+    app.run(main)

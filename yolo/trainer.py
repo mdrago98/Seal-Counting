@@ -1,3 +1,5 @@
+from functools import partial
+
 import tensorflow as tf
 import os
 import numpy as np
@@ -22,10 +24,14 @@ from helpers.augmentor import DataAugment
 from config.augmentation_options import augmentations
 from helpers.mixins import LoggerMixin
 from .models import BaseModel
-from helpers.utils import transform_images, transform_targets
+from helpers.utils import transform_images, transform_targets, timer, default_logger
 from helpers.annotation_parsers import adjust_non_voc_csv
-from helpers.utils import calculate_loss, timer, activate_gpu
+from helpers.utils import calculate_loss, activate_gpu
 from .evaluator import Evaluator
+
+logged_timer = partial(timer, default_logger)
+
+shape_type = Tuple[int, int, int]
 
 
 class Trainer(BaseModel, LoggerMixin):
@@ -35,13 +41,15 @@ class Trainer(BaseModel, LoggerMixin):
 
     def __init__(
         self,
-        input_shape: Tuple[int, int, int],
+        input_shape: shape_type,
         model_configuration: str,
         classes_file: str,
         image_width: int,
         image_height: int,
-        train_tf_record: str = None,
-        valid_tf_record: str = None,
+        all_records_path: str,
+        train_tf_record: str,
+        valid_tf_record: str,
+        ground_truth: dict,
         anchors: np.array = None,
         masks: np.array = None,
         max_boxes: int = 100,
@@ -62,8 +70,10 @@ class Trainer(BaseModel, LoggerMixin):
             score_threshold: float, values less than the threshold are ignored.
         """
         if output_path is None:
-            self.output_path = os.path.join(os.getcwd(), 'out')
-            default_logger.warn(f'{output_path=}. Saving in {self.output_path=}')
+            self.output_path = os.path.join(os.getcwd(), "out")
+            self.logger.warn(f"{output_path=}. Saving in {self.output_path=}")
+        self.all_records_path = all_records_path
+        self.ground_truth = ground_truth
         self.output_path = Path(output_path or os.getcwd())
         self.classes_file = classes_file
         self.class_names = [item.strip() for item in open(classes_file).readlines()]
@@ -79,7 +89,7 @@ class Trainer(BaseModel, LoggerMixin):
         )
         self.train_tf_record = train_tf_record
         self.valid_tf_record = valid_tf_record
-        # TODO pass parameter
+        # TODO: pass parameter
         self.image_folder = Path(os.path.join("", "Data", "Photos")).absolute().resolve()
         self.image_width = image_width
         self.image_height = image_height
@@ -110,10 +120,12 @@ class Trainer(BaseModel, LoggerMixin):
             if check:
                 raise ValueError(f"Got more than one configuration")
             labels_frame = parse_voc_folder(
-                os.path.join("", "Data", "XML Labels"), os.path.join("", "Config", "voc_conf.json"),
+                os.path.join(self.output_path, "Data", "XML Labels"),
+                os.path.join("", "Config", "voc_conf.json"),
             )
             labels_frame.to_csv(
-                os.path.join("", "Output", "Data", "parsed_from_xml.csv"), index=False,
+                os.path.join(self.output_path, "Output", "Data", "parsed_from_xml.csv"),
+                index=False,
             )
             check += 1
         if configuration.get("coordinate_labels"):
@@ -149,7 +161,7 @@ class Trainer(BaseModel, LoggerMixin):
         self.anchors = (
             generate_anchors(self.image_width, self.image_height, centroids) / self.input_shape[0]
         )
-        default_logger.info("Changed default anchors to generated ones")
+        self.logger.info("Changed default anchors to generated ones")
 
     def generate_new_frame(self, new_dataset_conf):
         """
@@ -212,7 +224,7 @@ class Trainer(BaseModel, LoggerMixin):
         augment.create_sequences(sequences)
         return augment.augment_photos_folder(batch_size or 64)
 
-    @timer(default_logger)
+    @logged_timer()
     def evaluate(
         self,
         weights_file,
@@ -241,8 +253,9 @@ class Trainer(BaseModel, LoggerMixin):
 
         Returns:
             stats, map_score.
+            :param full_data_path:
         """
-        default_logger.info("Starting evaluation ...")
+        self.logger.info("Starting evaluation ...")
         evaluator = Evaluator(
             self.input_shape,
             self.model_configuration,
@@ -254,17 +267,17 @@ class Trainer(BaseModel, LoggerMixin):
             self.max_boxes,
             self.iou_threshold,
             self.score_threshold,
+            self.output_path,
         )
         predictions = evaluator.make_predictions(weights_file, merge, workers, shuffle_buffer)
         if isinstance(predictions, tuple):
             training_predictions, valid_predictions = predictions
             if any([training_predictions.empty, valid_predictions.empty]):
-                default_logger.info("Aborting evaluations, no detections found")
+                self.logger.info("Aborting evaluations, no detections found")
                 return
-            training_actual = pd.read_csv(
-                os.path.join("", "Data", "TFRecords", "training_data.csv")
-            )
-            valid_actual = pd.read_csv(os.path.join("", "Data", "TFRecords", "test_data.csv"))
+            # TODO fix this is not ground truth
+            training_actual = pd.read_csv(self.ground_truth["train"])
+            valid_actual = pd.read_csv(self.ground_truth["valid"])
             training_stats, training_map = evaluator.calculate_map(
                 training_predictions,
                 training_actual,
@@ -284,9 +297,10 @@ class Trainer(BaseModel, LoggerMixin):
                 plot_stats,
             )
             return training_stats, training_map, valid_stats, valid_map
-        actual_data = pd.read_csv(os.path.join("", "Data", "TFRecords", "full_data.csv"))
+        # TODO: create flag for ground truth
+        actual_data = pd.read_csv(self.all_records_path)
         if predictions.empty:
-            default_logger.info("Aborting evaluations, no detections found")
+            self.logger.info("Aborting evaluations, no detections found")
             return
         stats, map_score = evaluator.calculate_map(
             predictions,
@@ -298,24 +312,25 @@ class Trainer(BaseModel, LoggerMixin):
         )
         return stats, map_score
 
-    @staticmethod
-    def clear_outputs():
+    def clear_outputs(self):
         """
         Clear Output folder.
 
         Returns:
             None
         """
-        for folder_name in os.listdir(os.path.join("", "Output")):
+        for folder_name in os.listdir(os.path.join(self.output_path, "Output")):
             if not folder_name.startswith("."):
-                full_path = Path(os.path.join("", "Output", folder_name)).absolute().resolve()
+                full_path = (
+                    Path(os.path.join(self.output_path, "Output", folder_name)).absolute().resolve()
+                )
                 for file_name in os.listdir(full_path):
                     full_file_path = Path(os.path.join(full_path, file_name))
                     if os.path.isdir(full_file_path):
                         shutil.rmtree(full_file_path)
                     else:
                         os.remove(full_file_path)
-                    default_logger.info(f"Deleted old output: {full_file_path}")
+                    self.logger.info(f"Deleted old output: {full_file_path}")
 
     def create_new_dataset(self, new_dataset_conf):
         """
@@ -337,12 +352,12 @@ class Trainer(BaseModel, LoggerMixin):
                     'Object ID']
                     - from_xml: True or False to parse from XML Labels folder.
         """
-        default_logger.info(f"Generating new dataset ...")
+        self.logger.info(f"Generating new dataset ...")
         test_size = new_dataset_conf.get("test_size")
         labels_frame = self.generate_new_frame(new_dataset_conf)
         save_tfr(
             labels_frame,
-            os.path.join("", "Data", "TFRecords"),
+            os.path.join(self.output_path, "Data", "TFRecords"),
             new_dataset_conf["dataset_name"],
             test_size,
             self,
@@ -357,15 +372,14 @@ class Trainer(BaseModel, LoggerMixin):
         """
         if not self.train_tf_record:
             issue = "No training TFRecord specified"
-            default_logger.error(issue)
+            self.logger.error(issue)
             raise ValueError(issue)
         if not self.valid_tf_record:
             issue = "No validation TFRecord specified"
-            default_logger.error(issue)
+            self.logger.error(issue)
             raise ValueError(issue)
 
-    @staticmethod
-    def create_callbacks(checkpoint_path):
+    def create_callbacks(self, checkpoint_path):
         """
         Create a list of tf.keras.callbacks.
         Args:
@@ -377,11 +391,11 @@ class Trainer(BaseModel, LoggerMixin):
         return [
             ReduceLROnPlateau(verbose=1, patience=4),
             ModelCheckpoint(os.path.join(checkpoint_path), verbose=1, save_weights_only=True,),
-            TensorBoard(log_dir=os.path.join("", "Logs")),
+            TensorBoard(log_dir=os.path.join(self.output_path, "Logs")),
             EarlyStopping(monitor="val_loss", patience=6, verbose=1),
         ]
 
-    @timer(default_logger)
+    @logged_timer()
     def train(
         self,
         epochs,
@@ -434,10 +448,10 @@ class Trainer(BaseModel, LoggerMixin):
         if clear_outputs:
             self.clear_outputs()
         activate_gpu()
-        default_logger.info(f"Starting training ...")
+        self.logger.info(f"Starting training ...")
         if new_anchors_conf:
             # TODO: add flag to train anchors automatically
-            default_logger.info(f"Generating new anchors ...")
+            self.logger.info(f"Generating new anchors ...")
             self.generate_new_anchors(new_anchors_conf)
         self.create_models()
         if weights:
@@ -453,7 +467,9 @@ class Trainer(BaseModel, LoggerMixin):
             for mask in self.masks
         ]
         self.training_model.compile(optimizer=optimizer, loss=loss)
-        checkpoint_path = os.path.join(self.output_path, "models", f'{dataset_name or "trained"}_model.tf')
+        checkpoint_path = os.path.join(
+            self.output_path, "models", f'{dataset_name or "trained"}_model.tf'
+        )
         callbacks = self.create_callbacks(checkpoint_path)
         if n_epoch_eval:
             mid_train_eval = MidTrainingEvaluator(
@@ -483,7 +499,7 @@ class Trainer(BaseModel, LoggerMixin):
         history = self.training_model.fit(
             training_dataset, epochs=epochs, callbacks=callbacks, validation_data=valid_dataset,
         )
-        default_logger.info("Training complete")
+        self.logger.info("Training complete")
         if evaluate:
             evaluations = self.evaluate(
                 checkpoint_path,

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import cv2
 import pandas as pd
 import numpy as np
@@ -46,6 +48,7 @@ class Evaluator(BaseModel):
             score_threshold: Minimum confidence for detection to count
                 as true positive.
         """
+        self.output_path = output_path or os.getcwd()
         self.classes_file = classes_file
         self.class_names = [item.strip() for item in open(classes_file).readlines()]
         super().__init__(
@@ -175,11 +178,19 @@ class Evaluator(BaseModel):
         valid_predictions = self.predict_dataset(valid_dataset, workers, "valid", batch_size)
         if merge:
             predictions = pd.concat([train_predictions, valid_predictions])
-            save_path = os.path.join("", "Output", "Data", "full_dataset_predictions.csv")
+            save_path = Path(
+                os.path.join(self.output_path, "Output", "Data", "full_dataset_predictions.csv")
+            )
+            save_path.parent.mkdir(parents=True, exist_ok=True)
             predictions.to_csv(save_path, index=False)
             return predictions
-        train_path = os.path.join("", "Output", "Data", "train_dataset_predictions.csv")
-        valid_path = os.path.join("", "Output", "Data", "valid_dataset_predictions.csv")
+        train_path = Path(
+            os.path.join(self.output_path, "Output", "Data", "train_dataset_predictions.csv")
+        )
+        train_path.parent.mkdir(parents=True, exist_ok=True)
+        valid_path = os.path.join(
+            self.output_path, "Output", "Data", "valid_dataset_predictions.csv"
+        )
         train_predictions.to_csv(train_path, index=False)
         valid_predictions.to_csv(valid_path, index=False)
         return train_predictions, valid_predictions
@@ -198,7 +209,9 @@ class Evaluator(BaseModel):
         x1, y1, x2, y2 = [frame[column] for column in columns]
         return (x2 - x1) * (y2 - y1)
 
-    def get_true_positives(self, detections, actual, min_overlaps):
+    def get_true_positives(
+        self, detections, actual, min_overlaps, convert_object_name: bool = True
+    ):
         """
         Filter True positive detections out of all detections.
         Args:
@@ -216,7 +229,7 @@ class Evaluator(BaseModel):
             raise ValueError(f"Empty predictions frame")
         if isinstance(min_overlaps, float):
             assert 0 <= min_overlaps < 1, (
-                f"min_overlaps should be " f"between 0 and 1, {min_overlaps} is given"
+                f"min_overlaps should be " f"between 0 and 1, {min_overlaps=} is given"
             )
         if isinstance(min_overlaps, dict):
             assert all([0 < min_overlap < 1 for min_overlap in min_overlaps.values()])
@@ -224,23 +237,26 @@ class Evaluator(BaseModel):
                 f"{[item for item in self.class_names if item not in min_overlaps]} "
                 f"are missing in min_overlaps"
             )
-        actual = actual.rename(columns={"Image Path": "image", "Object Name": "object_name"})
+        actual = actual.rename(columns={"tiff_file": "image", "layer_name": "object_name"})
         actual["image"] = actual["image"].apply(lambda x: os.path.split(x)[-1])
         random_gen = np.random.default_rng()
         if "detection_key" not in detections.columns:
             detection_keys = random_gen.choice(len(detections), size=len(detections), replace=False)
             detections["detection_key"] = detection_keys
+        if convert_object_name:
+            actual["object_name"] = actual.object_name.apply(lambda x: self.class_names[x])
         total_frame = actual.merge(detections, on=["image", "object_name"])
+        # TODO: make throw value error
         assert not total_frame.empty, "No common image names found between actual and detections"
-        total_frame["x_max_common"] = total_frame[["X_max", "x2"]].min(1)
-        total_frame["x_min_common"] = total_frame[["X_min", "x1"]].max(1)
-        total_frame["y_max_common"] = total_frame[["Y_max", "y2"]].min(1)
-        total_frame["y_min_common"] = total_frame[["Y_min", "y1"]].max(1)
+        total_frame["x_max_common"] = total_frame[["xmax", "x2"]].min(1)
+        total_frame["x_min_common"] = total_frame[["xmin", "x1"]].max(1)
+        total_frame["y_max_common"] = total_frame[["ymax", "y2"]].min(1)
+        total_frame["y_min_common"] = total_frame[["ymin", "y1"]].max(1)
         true_intersect = (total_frame["x_max_common"] > total_frame["x_min_common"]) & (
             total_frame["y_max_common"] > total_frame["y_min_common"]
         )
         total_frame = total_frame[true_intersect]
-        actual_areas = self.get_area(total_frame, ["X_min", "Y_min", "X_max", "Y_max"])
+        actual_areas = self.get_area(total_frame, ["xmin", "ymin", "xmax", "ymax"])
         predicted_areas = self.get_area(total_frame, ["x1", "y1", "x2", "y2"])
         intersect_areas = self.get_area(
             total_frame, ["x_min_common", "y_min_common", "x_max_common", "y_max_common"],
@@ -302,8 +318,8 @@ class Evaluator(BaseModel):
                 "x_max_common",
                 "y_max_common",
                 "iou",
-                "image_width",
-                "image_height",
+                "image_width_x",
+                "image_height_x",
                 "true_positive",
                 "false_positive",
                 "detection_key",
@@ -355,13 +371,13 @@ class Evaluator(BaseModel):
             pandas DataFrame with statistics for all classes.
         """
         class_stats = []
-        for class_name in self.class_names:
+        for class_index, class_name in enumerate(self.class_names):
             stats = dict()
             stats["Class Name"] = class_name
             stats["Average Precision"] = (
                 combined[combined["object_name"] == class_name]["average_precision"].sum() * 100
             )
-            stats["Actual"] = len(actual_data[actual_data["Object Name"] == class_name])
+            stats["Actual"] = len(actual_data[actual_data["layer_name"] == class_index])
             stats["Detections"] = len(detection_data[detection_data["object_name"] == class_name])
             stats["True Positives"] = len(
                 true_positives[true_positives["object_name"] == class_name]
@@ -426,17 +442,15 @@ class Evaluator(BaseModel):
         Returns:
             pandas DataFrame with statistics, mAP score.
         """
-        actual_data["Object Name"] = actual_data["Object Name"].apply(
-            lambda x: x.replace("b'", "").replace("'", "")
-        )
-        class_counts = actual_data["Object Name"].value_counts().to_dict()
+        actual_data["layer_name"] = actual_data["layer_name"]
+        class_counts = actual_data["layer_name"].value_counts().to_dict()
         true_positives = self.get_true_positives(prediction_data, actual_data, min_overlaps)
         false_positives = self.get_false_positives(prediction_data, true_positives)
         combined = self.combine_results(true_positives, false_positives)
         class_groups = combined.groupby("object_name")
         calculated = pd.concat(
             [
-                self.calculate_ap(group, class_counts.get(object_name))
+                self.calculate_ap(group, class_counts.get(self.class_names.index(object_name)))
                 for object_name, group in class_groups
             ]
         )
@@ -452,6 +466,6 @@ class Evaluator(BaseModel):
             print(f"mAP score: {map_score}%")
             pd.reset_option("display.[max_rows, max_columns, width]")
         if plot_results:
-            visualize_pr(calculated, save_figs, fig_prefix)
-            visualize_evaluation_stats(stats, fig_prefix)
+            visualize_pr(calculated, save_figs, fig_prefix, self.output_path)
+            visualize_evaluation_stats(stats, fig_prefix, self.output_path)
         return stats, map_score
