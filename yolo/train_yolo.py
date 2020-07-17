@@ -21,12 +21,12 @@ if gpus:
 
 
 #%%
-input_shape = (416, 416, 3)
+input_shape = (832, 832, 3)
 
 #%%
 trainer = Trainer(
     input_shape=input_shape,
-    model_configuration="/data2/seals/tfrecords/yolo4.cfg",
+    model_configuration="/data2/seals/tfrecords/yolo3.cfg",
     image_width=416,  # The original image width
     image_height=416,  # The original image height
     train_tf_record="/data2/seals/tfrecords/416/train.tfrecord",
@@ -47,10 +47,10 @@ feature_map = get_feature_map()
 with open("/data2/seals/tfrecords/416/classes.txt", "r") as classes_file:
     classes = [item.strip() for item in classes_file.readlines()]
 
-raw_dataset = tf.data.TFRecordDataset("/data2/seals/tfrecords/416/train.tfrecord")
-test = []
-for example in raw_dataset.shuffle(512).take(20):
-    test += [read_example(example, feature_map=feature_map, class_table=None, max_boxes=9)]
+# raw_dataset = tf.data.TFRecordDataset("/data2/seals/tfrecords/416/train.tfrecord")
+# test = []
+# for example in raw_dataset.shuffle(512).take(20):
+#     test += [read_example(example, feature_map=feature_map, class_table=None, max_boxes=9)]
 
 ## TODO write new
 # dataset = read_tfr(
@@ -69,10 +69,10 @@ for example in raw_dataset.shuffle(512).take(20):
 
 ## TODO: pickle settings
 trainer.train(
-    epochs=5000,
+    epochs=300,
     batch_size=8,
     learning_rate=1e-3,
-    dataset_name="seal_416",
+    dataset_name="seal_416_yolo4",
     merge_evaluation=False,
     min_overlaps=0.5,
     # new_anchors_conf=anchors_conf,  # check step 6

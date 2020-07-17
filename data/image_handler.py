@@ -122,6 +122,15 @@ def crop(
         yield cropped, normalised_coord, result_file_name
 
 
+def generate_bbox(location_dataset: DataFrame, box_size: tuple = (60, 60)) -> DataFrame:
+    locations = location_dataset.copy()
+    locations["x_pixel"] = locations["x_pixel"].apply(lambda x: x - box_size[0] / 2)
+    locations["x_pixel_end"] = locations["x_pixel"].apply(lambda x: x + box_size[0])
+    locations["y_pixel"] = locations["y_pixel"].apply(lambda x: x - box_size[1] / 2)
+    locations["y_pixel_end"] = locations["y_pixel"].apply(lambda x: x + box_size[1])
+    return locations
+
+
 if __name__ == "__main__":
     locations = read_excel("pixel_coord.xlsx", sheet_name="PixelCoordinates")[
         ["tiff_file", "layer_name", "x_pixel", "y_pixel"]

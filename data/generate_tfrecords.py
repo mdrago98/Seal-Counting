@@ -40,6 +40,11 @@ flags.DEFINE_string(
     path.join(getcwd(), "output", "tfrecords"),
     "The output in which to store the output",
 )
+flags.DEFINE_string(
+    "save_png",
+    "",
+    "The output path relative to the output directory in which to save the extracted png images",
+)
 flags.DEFINE_integer("image_size", 416, "The image size to crop to.")
 flags.DEFINE_float("train_size", 0.8, "The size of the training data")
 flags.DEFINE_float("validation", 0.2, "The size of the validation data")
