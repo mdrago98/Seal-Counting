@@ -1,9 +1,9 @@
 from collections import namedtuple
 from io import BytesIO
 from os import path
-from random import randint, sample
+from random import randint
 from typing import Callable
-from numpy import int64, random
+from numpy import int64
 
 import tensorflow as tf
 from pandas import DataFrame, read_excel, concat as pd_concat
@@ -14,13 +14,14 @@ from tqdm import tqdm
 from os import getcwd
 from data import (
     BBox,
-    dataset_util,
     generate_bbox,
     get_bbox,
     is_in_bounding_box,
     normalise_coordinates,
 )
+from data.utils import tf_example_utils
 from data.pipeline import PIPELINE
+from sklearn.model_selection import train_test_split
 
 
 Image.MAX_IMAGE_PIXELS = 99999999999999999999
@@ -30,7 +31,9 @@ Image.MAX_IMAGE_PIXELS = 99999999999999999999
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string(
-    "pixel_coord", path.join(getcwd(), "pixel_coord.xlsx"), "The excel file containing the locations and file sizes"
+    "pixel_coord",
+    path.join(getcwd(), "data_files", "pixel_coord.xlsx"),
+    "The excel file containing the locations and file sizes",
 )
 flags.DEFINE_string(
     "output_location",
@@ -271,22 +274,24 @@ def convert_to_tf_records(group: data) -> tf.train.Example:
     return tf.train.Example(
         features=tf.train.Features(
             feature={
-                "image/height": dataset_util.int64_feature(height),
-                "image/width": dataset_util.int64_feature(width),
-                "image/source_id": dataset_util.bytes_feature(object["tiff_file"].iloc[0].encode()),
-                "image/encoded": dataset_util.bytes_feature(image),
-                "image/format": dataset_util.bytes_feature("tif".encode()),
-                "image/object/bbox/xmin": dataset_util.float_list_feature(xmin.tolist()),
-                "image/object/bbox/xmax": dataset_util.float_list_feature(xmax.tolist()),
-                "image/object/bbox/ymin": dataset_util.float_list_feature(ymin.tolist()),
-                "image/object/bbox/ymax": dataset_util.float_list_feature(ymax.tolist()),
-                "image/object/class/label": dataset_util.int64_list_feature(
+                "image/height": tf_example_utils.int64_feature(height),
+                "image/width": tf_example_utils.int64_feature(width),
+                "image/source_id": tf_example_utils.bytes_feature(
+                    object["tiff_file"].iloc[0].encode()
+                ),
+                "image/encoded": tf_example_utils.bytes_feature(image),
+                "image/format": tf_example_utils.bytes_feature("tif".encode()),
+                "image/object/bbox/xmin": tf_example_utils.float_list_feature(xmin.tolist()),
+                "image/object/bbox/xmax": tf_example_utils.float_list_feature(xmax.tolist()),
+                "image/object/bbox/ymin": tf_example_utils.float_list_feature(ymin.tolist()),
+                "image/object/bbox/ymax": tf_example_utils.float_list_feature(ymax.tolist()),
+                "image/object/class/label": tf_example_utils.int64_list_feature(
                     object["layer_name"].tolist()
                 ),
-                "image/object/bbox/x_pixel": dataset_util.float_list_feature(
+                "image/object/bbox/x_pixel": tf_example_utils.float_list_feature(
                     object["x_pixel"].tolist()
                 ),
-                "image/object/bbox/y_pixel": dataset_util.float_list_feature(
+                "image/object/bbox/y_pixel": tf_example_utils.float_list_feature(
                     object["y_pixel"].tolist()
                 ),
             }
@@ -316,7 +321,7 @@ def write_to_record(dataset: DataFrame, output_dir: str, name: str, size: tuple 
     """
     output_path = path.join(output_dir, f"{name}.tfrecord")
     writer = tf.compat.v1.python_io.TFRecordWriter(output_path)
-    grouped_train = sample(split(dataset, "tiff_file"), 10)
+    grouped_train = split(dataset, "tiff_file")
     filenames = [filename for filename, _ in grouped_train]
     all_data = DataFrame()
     for image, output in tqdm(grouped_train):
@@ -358,21 +363,16 @@ def main(argv: list):
     # TODO: add flag for validation dataset
     out_size = (FLAGS.image_size, FLAGS.image_size)
     output_dir = create_output_dir(FLAGS.output_location, FLAGS.image_size)
-    locations = read_excel(
-        FLAGS.pixel_coord,
-        sheet_name="PixelCoordinates",
-    )
-    file_props = read_excel(
-        FLAGS.pixel_coord, sheet_name="FileOverview",
-    ).dropna()
+    locations = read_excel(FLAGS.pixel_coord, sheet_name="PixelCoordinates",)
+    file_props = read_excel(FLAGS.pixel_coord, sheet_name="FileOverview",).dropna()
     locations = locations.merge(
         file_props[["tiff_file", "image_width", "image_height"]], how="inner"
     )
     write_classes(output_dir, list(locations["layer_name"].dropna().unique()))
     locations = clean_data(locations)
-    msk = random.rand(len(locations)) < FLAGS.train_size
-    train = locations[msk]
-    test = locations[~msk]
+    train, test = train_test_split(
+        locations, stratify=locations[["layer_name"]], train_size=FLAGS.train_size, random_state=42
+    )
     logger.info(f"Cleaned the dataset generating tf_records")
     logger.info("Generating training records")
     write_to_record(train, FLAGS.output_location, "train", size=out_size)

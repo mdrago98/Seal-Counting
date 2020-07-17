@@ -1,5 +1,5 @@
 import unittest
-from .tf_data_integration import *
+from .generate_tfrecords import *
 from .image_handler import get_bbox
 from pandas import DataFrame
 from numpy.testing import assert_array_equal
