@@ -40,10 +40,8 @@ flags.DEFINE_string(
     path.join(getcwd(), "output", "tfrecords"),
     "The output in which to store the output",
 )
-flags.DEFINE_string(
-    "save_png",
-    "",
-    "The output path relative to the output directory in which to save the extracted png images",
+flags.DEFINE_boolean(
+    "save_png", False, "A boolean flag indicating whether to save the cropped png image",
 )
 flags.DEFINE_integer("image_size", 416, "The image size to crop to.")
 flags.DEFINE_float("train_size", 0.8, "The size of the training data")
@@ -215,7 +213,7 @@ def extrapolate_crops_output(
                 crop_box = get_seal_cropping_region(outputs, size)[
                     ["x_min", "y_min", "x_max", "y_max"]
                 ]
-                for _, row in crop_box.iterrows():
+                for index, row in crop_box.iterrows():
                     box: BBox = get_bbox(
                         (row["x_min"], row["x_max"]), (row["y_min"], row["y_max"]),
                     )

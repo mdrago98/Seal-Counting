@@ -4,6 +4,7 @@ from yolo.trainer import Trainer
 import tensorflow as tf
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle, Circle
+import tensorflow_datasets as tfds
 
 
 #%%
@@ -21,22 +22,24 @@ if gpus:
 
 
 #%%
-input_shape = (832, 832, 3)
+input_shape = (416, 416, 3)
+
+# ds_train = tfds.load("coco/2014", split="train", shuffle_files=True)
 
 #%%
 trainer = Trainer(
     input_shape=input_shape,
-    model_configuration="/data2/seals/tfrecords/yolo3.cfg",
+    model_configuration="/data2/seals/tfrecords/yolo4.cfg",
     image_width=416,  # The original image width
     image_height=416,  # The original image height
-    train_tf_record="/data2/seals/tfrecords/416/train.tfrecord",
-    valid_tf_record="/data2/seals/tfrecords/416/test.tfrecord",
+    train_tf_record="/data2/seals/tfrecords/416_10/train.tfrecord",
+    valid_tf_record="/data2/seals/tfrecords/416_10/test.tfrecord",
     classes_file="/data2/seals/tfrecords/416/classes.txt",
-    output_path="/home/md273/model_zoo/416_yolo4",
-    all_records_path="/data2/seals/tfrecords/416/416_test_all_records.csv",
+    output_path="/home/md273/model_zoo/416_yolo4_10",
+    all_records_path="/data2/seals/tfrecords/416_10/416_test_all_records.csv",
     ground_truth={
-        "train": "/data2/seals/tfrecords/416/416_train_all_records.csv",
-        "valid": "/data2/seals/tfrecords/416/416_test_all_records.csv",
+        "train": "/data2/seals/tfrecords/416_10/416_train_all_records.csv",
+        "valid": "/data2/seals/tfrecords/416_10/416_train_all_records.csv",
     },
 )
 
