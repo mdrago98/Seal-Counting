@@ -1,635 +1,223 @@
-from functools import partial
+from absl import app, flags, logging
 
 import tensorflow as tf
-import os
 import numpy as np
-import pandas as pd
-from pathlib import Path
-
+import cv2
 from tensorflow.keras.callbacks import (
     ReduceLROnPlateau,
-    TensorBoard,
-    ModelCheckpoint,
-    Callback,
     EarlyStopping,
+    ModelCheckpoint,
+    TensorBoard,
 )
-import shutil
+from yolo.models_v3 import (
+    YoloV3,
+    YoloV3Tiny,
+    YoloLoss,
+    yolo_anchors,
+    yolo_anchor_masks,
+    yolo_tiny_anchors,
+    yolo_tiny_anchor_masks,
+)
+from yolo.utils import freeze_all
+import data.dataset as dataset
 
-from typing import Tuple
+FLAGS = flags.FLAGS
 
-from helpers.dataset_handlers import read_tfr, save_tfr, get_feature_map
-from helpers.annotation_parsers import parse_voc_folder
-from helpers.anchors import k_means, generate_anchors
-from helpers.augmentor import DataAugment
-from config.augmentation_options import augmentations
-from helpers.mixins import LoggerMixin
-from .models import BaseModel
-from helpers.utils import transform_images, transform_targets, timer, default_logger
-from helpers.annotation_parsers import adjust_non_voc_csv
-from helpers.utils import calculate_loss, activate_gpu
-from .evaluator import Evaluator
+flags.DEFINE_string("train_dataset", "", "path to dataset")
+flags.DEFINE_string("val_dataset", "", "path to validation dataset")
+flags.DEFINE_boolean("tiny", False, "yolov3 or yolov3-tiny")
+flags.DEFINE_string(
+    "weights", "/home/273/model_zoo/416_10_yolov3/checkpoints/yolov3.tf", "path to weights file"
+)
+flags.DEFINE_string("classes", "./data/coco.names", "path to classes file")
+flags.DEFINE_enum(
+    "mode",
+    "fit",
+    ["fit", "eager_fit", "eager_tf"],
+    "fit: model.fit, " "eager_fit: model.fit(run_eagerly=True), " "eager_tf: custom GradientTape",
+)
+flags.DEFINE_enum(
+    "transfer",
+    "none",
+    ["none", "darknet", "no_output", "frozen", "fine_tune"],
+    "none: Training from scratch, "
+    "darknet: Transfer darknet, "
+    "no_output: Transfer all but output, "
+    "frozen: Transfer and freeze all, "
+    "fine_tune: Transfer all and freeze darknet only",
+)
+flags.DEFINE_integer("size", 416, "image size")
+flags.DEFINE_integer("epochs", 2, "number of epochs")
+flags.DEFINE_integer("batch_size", 8, "batch size")
+flags.DEFINE_float("learning_rate", 1e-3, "learning rate")
+flags.DEFINE_integer("num_classes", 80, "number of classes in the model")
+flags.DEFINE_integer(
+    "weights_num_classes",
+    None,
+    "specify num class for `weights` file if different, "
+    "useful in transfer learning with different number of classes",
+)
+flags.DEFINE_string("log_output", "", "The logging path")
+# TODO: anchors
+flags.DEFINE_string("anchor_path", "", "The anchor config path")
 
-logged_timer = partial(timer, default_logger)
+# TODO: migrate to unified abseil logger
+# TODO: accept new anchor path
+def main(_argv):
+    physical_devices = tf.config.experimental.list_physical_devices("GPU")
+    for physical_device in physical_devices:
+        tf.config.experimental.set_memory_growth(physical_device, True)
+    # TODO: create model dictionary
+    with open(FLAGS.classes, "r") as classes_file:
+        classes = [item.strip() for item in classes_file.readlines()]
+    model = YoloV3(FLAGS.size, training=True, classes=len(classes))
+    # TODO: load anchors from file
+    anchors = yolo_anchors
+    anchor_masks = yolo_anchor_masks
 
-shape_type = Tuple[int, int, int]
+    # train_dataset = dataset.load_fake_dataset()
 
-
-class Trainer(BaseModel, LoggerMixin):
-    """
-    Create a training instance.
-    """
-
-    def __init__(
-        self,
-        input_shape: shape_type,
-        model_configuration: str,
-        classes_file: str,
-        image_width: int,
-        image_height: int,
-        all_records_path: str,
-        train_tf_record: str,
-        valid_tf_record: str,
-        ground_truth: dict,
-        anchors: np.array = None,
-        masks: np.array = None,
-        max_boxes: int = 100,
-        iou_threshold: float = 0.5,
-        score_threshold: float = 0.5,
-        output_path: str = None,
-    ):
-        """
-        Initialize training.
-        Args:
-            model_configuration: Path to DarkNet cfg file.
-            input_shape: tuple, (n, n, c)
-            anchors: numpy array of (w, h) pairs.
-            masks: numpy array of masks.
-            max_boxes: Maximum boxes of the TFRecords provided(if any) or
-                maximum boxes setting.
-            iou_threshold: float, values less than the threshold are ignored.
-            score_threshold: float, values less than the threshold are ignored.
-        """
-        if output_path is None:
-            self.output_path = os.path.join(os.getcwd(), "out")
-            self.logger.warn(f"{output_path=}. Saving in {self.output_path=}")
-        self.all_records_path = all_records_path
-        self.ground_truth = ground_truth
-        self.output_path = Path(output_path or os.getcwd())
-        self.classes_file = classes_file
-        self.class_names = [item.strip() for item in open(classes_file).readlines()]
-        super().__init__(
-            input_shape,
-            model_configuration,
-            len(self.class_names),
-            anchors,
-            masks,
-            max_boxes,
-            iou_threshold,
-            score_threshold,
+    train_dataset = dataset.load_tfrecord_dataset(FLAGS.train_dataset, FLAGS.classes, FLAGS.size)
+    train_dataset = train_dataset.shuffle(buffer_size=512)
+    train_dataset = train_dataset.batch(FLAGS.batch_size)
+    for x, y in train_dataset.take(10):
+        y = dataset.transform_targets(y, anchors, anchor_masks, FLAGS.size)
+    train_dataset = train_dataset.map(
+        lambda x, y: (
+            dataset.transform_images(x, FLAGS.size),
+            dataset.transform_targets(y, anchors, anchor_masks, FLAGS.size),
         )
-        self.train_tf_record = train_tf_record
-        self.valid_tf_record = valid_tf_record
-        # TODO: pass parameter
-        self.image_folder = Path(os.path.join("", "Data", "Photos")).absolute().resolve()
-        self.image_width = image_width
-        self.image_height = image_height
+    )
+    train_dataset = train_dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
-    def get_adjusted_labels(self, configuration):
-        """
-        Adjust labels according to given configuration.
-        Args:
-            configuration: A dictionary containing any of the following keys:
-                - relative_labels
-                - from_xml
-                - coordinate_labels
-
-        Returns:
-            pandas DataFrame with adjusted labels.
-        """
-        labels_frame = None
-        check = 0
-        if configuration.get("relative_labels"):
-            labels_frame = adjust_non_voc_csv(
-                configuration["relative_labels"],
-                self.image_folder,
-                self.image_width,
-                self.image_height,
-            )
-            check += 1
-        if configuration.get("from_xml"):
-            if check:
-                raise ValueError(f"Got more than one configuration")
-            labels_frame = parse_voc_folder(
-                os.path.join(self.output_path, "Data", "XML Labels"),
-                os.path.join("", "Config", "voc_conf.json"),
-            )
-            labels_frame.to_csv(
-                os.path.join(self.output_path, "Output", "Data", "parsed_from_xml.csv"),
-                index=False,
-            )
-            check += 1
-        if configuration.get("coordinate_labels"):
-            if check:
-                raise ValueError(f"Got more than one configuration")
-            labels_frame = pd.read_csv(configuration["coordinate_labels"])
-            check += 1
-        return labels_frame
-
-    def generate_new_anchors(self, new_anchors_conf):
-        """
-        Create new anchors according to given configuration.
-        Args:
-            new_anchors_conf: A dictionary containing the following keys:
-                - anchor_no
-                and one of the following:
-                    - relative_labels
-                    - from_xml
-                    - coordinate_labels
-            new_anchors_conf: A dictionary with the following keys:
-            - anchor_no: number of anchors to generate
-        Returns:
-            None
-        """
-        anchor_no = new_anchors_conf.get("anchor_no")
-        if not anchor_no:
-            raise ValueError(f'No "anchor_no" found in new_anchors_conf')
-        labels_frame = self.get_adjusted_labels(new_anchors_conf)
-        relative_dims = np.array(
-            list(zip(labels_frame["Relative Width"], labels_frame["Relative Height"],))
+    # val_dataset = dataset.load_fake_dataset()
+    # if FLAGS.val_dataset:
+    # TODO: extract into a function
+    val_dataset = dataset.load_tfrecord_dataset(FLAGS.val_dataset, FLAGS.classes, FLAGS.size)
+    val_dataset = val_dataset.batch(FLAGS.batch_size)
+    val_dataset = val_dataset.map(
+        lambda x, y: (
+            dataset.transform_images(x, FLAGS.size),
+            dataset.transform_targets(y, anchors, anchor_masks, FLAGS.size),
         )
-        centroids, _ = k_means(relative_dims, anchor_no, frame=labels_frame)
-        self.anchors = (
-            generate_anchors(self.image_width, self.image_height, centroids) / self.input_shape[0]
-        )
-        self.logger.info("Changed default anchors to generated ones")
+    )
 
-    def generate_new_frame(self, new_dataset_conf):
-        """
-        Create new labels frame according to given configuration.
+    # Configure the model for transfer learning
+    if FLAGS.transfer == "none":
+        pass  # Nothing to do
+    elif FLAGS.transfer in ["darknet", "no_output"]:
+        # Darknet transfer is a special case that works
+        # with incompatible number of classes
 
-        Returns:
-            pandas DataFrame adjusted for building the dataset containing
-            labels or labels and augmented labels combined
-        """
-        if not new_dataset_conf.get("dataset_name"):
-            raise ValueError("dataset_name not found in new_dataset_conf")
-        labels_frame = self.get_adjusted_labels(new_dataset_conf)
-        if new_dataset_conf.get("augmentation"):
-            labels_frame = self.augment_photos(new_dataset_conf)
-        return labels_frame
-
-    def initialize_dataset(self, tf_record, batch_size, shuffle_buffer=512):
-        """
-        Initialize and prepare TFRecord dataset for training.
-        Args:
-            tf_record: TFRecord file.
-            batch_size: int, training batch size
-            shuffle_buffer: Buffer size for shuffling dataset.
-
-        Returns:
-            dataset.
-        """
-        dataset = read_tfr(tf_record, self.classes_file, get_feature_map(), self.max_boxes)
-        dataset = dataset.shuffle(shuffle_buffer)
-        dataset = dataset.batch(batch_size)
-        dataset = dataset.map(
-            lambda x, y: (
-                transform_images(x, self.input_shape[0]),
-                transform_targets(y, self.anchors, self.masks, self.input_shape[0]),
+        # reset top layers
+        if FLAGS.tiny:
+            model_pretrained = YoloV3Tiny(
+                FLAGS.size, training=True, classes=FLAGS.weights_num_classes or FLAGS.num_classes
             )
-        )
-        dataset = dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
-        return dataset
-
-    @staticmethod
-    def augment_photos(new_dataset_conf):
-        """
-        Augment photos in self.image_paths
-        Args:
-            new_dataset_conf: New dataset configuration dict.
-
-        Returns:
-            pandas DataFrame with both original and augmented data.
-        """
-        sequences = new_dataset_conf.get("sequences")
-        relative_labels = new_dataset_conf.get("relative_labels")
-        coordinate_labels = new_dataset_conf.get("coordinate_labels")
-        workers = new_dataset_conf.get("aug_workers")
-        batch_size = new_dataset_conf.get("aug_batch_size")
-        if not sequences:
-            raise ValueError(f'"sequences" not found in new_dataset_conf')
-        if not relative_labels:
-            raise ValueError(f'No "relative_labels" found in new_dataset_conf')
-        augment = DataAugment(relative_labels, augmentations, workers or 32, coordinate_labels)
-        augment.create_sequences(sequences)
-        return augment.augment_photos_folder(batch_size or 64)
-
-    @logged_timer()
-    def evaluate(
-        self,
-        weights_file,
-        merge,
-        workers,
-        shuffle_buffer,
-        min_overlaps,
-        display_stats=True,
-        plot_stats=True,
-        save_figs=True,
-    ):
-        """
-        Evaluate on training and validation datasets.
-        Args:
-            weights_file: Path to trained .tf file.
-            merge: If False, training and validation datasets will be evaluated separately.
-            workers: Parallel predictions.
-            shuffle_buffer: Buffer size for shuffling datasets.
-            min_overlaps: a float value between 0 and 1, or a dictionary
-                containing each class in self.class_names mapped to its
-                minimum overlap
-            display_stats: If True evaluation statistics will be printed.
-            plot_stats: If True, evaluation statistics will be plotted including
-                precision and recall curves and mAP
-            save_figs: If True, resulting plots will be save to Output folder.
-
-        Returns:
-            stats, map_score.
-            :param full_data_path:
-        """
-        self.logger.info("Starting evaluation ...")
-        evaluator = Evaluator(
-            self.input_shape,
-            self.model_configuration,
-            self.train_tf_record,
-            self.valid_tf_record,
-            self.classes_file,
-            self.anchors,
-            self.masks,
-            self.max_boxes,
-            self.iou_threshold,
-            self.score_threshold,
-            self.output_path,
-        )
-        predictions = evaluator.make_predictions(weights_file, merge, workers, shuffle_buffer)
-        if isinstance(predictions, tuple):
-            training_predictions, valid_predictions = predictions
-            if any([training_predictions.empty, valid_predictions.empty]):
-                self.logger.info("Aborting evaluations, no detections found")
-                return
-            # TODO fix this is not ground truth
-            training_actual = pd.read_csv(self.ground_truth["train"])
-            valid_actual = pd.read_csv(self.ground_truth["valid"])
-            training_stats, training_map = evaluator.calculate_map(
-                training_predictions,
-                training_actual,
-                min_overlaps,
-                display_stats,
-                "Train",
-                save_figs,
-                plot_stats,
+        else:
+            model_pretrained = YoloV3(
+                FLAGS.size, training=True, classes=FLAGS.weights_num_classes or FLAGS.num_classes
             )
-            valid_stats, valid_map = evaluator.calculate_map(
-                valid_predictions,
-                valid_actual,
-                min_overlaps,
-                display_stats,
-                "Valid",
-                save_figs,
-                plot_stats,
+        model_pretrained.load_weights(FLAGS.weights)
+
+        if FLAGS.transfer == "darknet":
+            model.get_layer("yolo_darknet").set_weights(
+                model_pretrained.get_layer("yolo_darknet").get_weights()
             )
-            return training_stats, training_map, valid_stats, valid_map
-        # TODO: create flag for ground truth
-        actual_data = pd.read_csv(self.all_records_path)
-        if predictions.empty:
-            self.logger.info("Aborting evaluations, no detections found")
-            return
-        stats, map_score = evaluator.calculate_map(
-            predictions,
-            actual_data,
-            min_overlaps,
-            display_stats,
-            save_figs=save_figs,
-            plot_results=plot_stats,
-        )
-        return stats, map_score
+            freeze_all(model.get_layer("yolo_darknet"))
 
-    def clear_outputs(self):
-        """
-        Clear Output folder.
+        elif FLAGS.transfer == "no_output":
+            for l in model.layers:
+                if not l.name.startswith("yolo_output"):
+                    l.set_weights(model_pretrained.get_layer(l.name).get_weights())
+                    freeze_all(l)
 
-        Returns:
-            None
-        """
-        for folder_name in os.listdir(os.path.join(self.output_path, "Output")):
-            if not folder_name.startswith("."):
-                full_path = (
-                    Path(os.path.join(self.output_path, "Output", folder_name)).absolute().resolve()
+    else:
+        # All other transfer require matching classes
+        model.load_weights(FLAGS.weights)
+        if FLAGS.transfer == "fine_tune":
+            # freeze darknet and fine tune other layers
+            darknet = model.get_layer("yolo_darknet")
+            freeze_all(darknet)
+        elif FLAGS.transfer == "frozen":
+            # freeze everything
+            freeze_all(model)
+
+    optimizer = tf.keras.optimizers.Adam(lr=FLAGS.learning_rate)
+    loss = [YoloLoss(anchors[mask], classes=len(classes)) for mask in anchor_masks]
+
+    if FLAGS.mode == "eager_tf":
+        # Eager mode is great for debugging
+        # Non eager graph mode is recommended for real training
+        avg_loss = tf.keras.metrics.Mean("loss", dtype=tf.float32)
+        avg_val_loss = tf.keras.metrics.Mean("val_loss", dtype=tf.float32)
+
+        for epoch in range(1, FLAGS.epochs + 1):
+            for batch, (images, labels) in enumerate(train_dataset):
+                with tf.GradientTape() as tape:
+                    outputs = model(images, training=True)
+                    regularization_loss = tf.reduce_sum(model.losses)
+                    pred_loss = []
+                    for output, label, loss_fn in zip(outputs, labels, loss):
+                        pred_loss.append(loss_fn(label, output))
+                    total_loss = tf.reduce_sum(pred_loss) + regularization_loss
+
+                grads = tape.gradient(total_loss, model.trainable_variables)
+                optimizer.apply_gradients(zip(grads, model.trainable_variables))
+
+                logging.info(
+                    "{}_train_{}, {}, {}".format(
+                        epoch,
+                        batch,
+                        total_loss.numpy(),
+                        list(map(lambda x: np.sum(x.numpy()), pred_loss)),
+                    )
                 )
-                for file_name in os.listdir(full_path):
-                    full_file_path = Path(os.path.join(full_path, file_name))
-                    if os.path.isdir(full_file_path):
-                        shutil.rmtree(full_file_path)
-                    else:
-                        os.remove(full_file_path)
-                    self.logger.info(f"Deleted old output: {full_file_path}")
+                avg_loss.update_state(total_loss)
 
-    def create_new_dataset(self, new_dataset_conf):
-        """
-        Create a new TFRecord dataset.
-        Args:
-            new_dataset_conf: A dictionary containing the following keys:
-                - dataset_name(required) str representing a name for the dataset
-                - test_size(optional) ex: 0.1
-                - augmentation(optional) True or False
-                - sequences(required if augmentation is True)
-                - aug_workers(optional if augmentation is True) defaults to 32.
-                - aug_batch_size(optional if augmentation is True) defaults to 64.
-                And one of the following is required:
-                    - relative_labels: Path to csv file with the following columns:
-                    ['Image', 'Object Name', 'Object Index', 'bx', 'by', 'bw', 'bh']
-                    - coordinate_labels: Path to csv file with the following columns:
-                    ['Image Path', 'Object Name', 'Image Width', 'Image Height',
-                    'X_min', 'Y_min', 'X_max', 'Y_max', 'Relative Width', 'Relative Height',
-                    'Object ID']
-                    - from_xml: True or False to parse from XML Labels folder.
-        """
-        self.logger.info(f"Generating new dataset ...")
-        test_size = new_dataset_conf.get("test_size")
-        labels_frame = self.generate_new_frame(new_dataset_conf)
-        save_tfr(
-            labels_frame,
-            os.path.join(self.output_path, "Data", "TFRecords"),
-            new_dataset_conf["dataset_name"],
-            test_size,
-            self,
-        )
+            for batch, (images, labels) in enumerate(val_dataset):
+                outputs = model(images)
+                regularization_loss = tf.reduce_sum(model.losses)
+                pred_loss = []
+                for output, label, loss_fn in zip(outputs, labels, loss):
+                    pred_loss.append(loss_fn(label, output))
+                total_loss = tf.reduce_sum(pred_loss) + regularization_loss
 
-    def check_tf_records(self):
-        """
-        Ensure TFRecords are specified to start training.
+                logging.info(
+                    "{}_val_{}, {}, {}".format(
+                        epoch,
+                        batch,
+                        total_loss.numpy(),
+                        list(map(lambda x: np.sum(x.numpy()), pred_loss)),
+                    )
+                )
+                avg_val_loss.update_state(total_loss)
 
-        Returns:
-            None
-        """
-        if not self.train_tf_record:
-            issue = "No training TFRecord specified"
-            self.logger.error(issue)
-            raise ValueError(issue)
-        if not self.valid_tf_record:
-            issue = "No validation TFRecord specified"
-            self.logger.error(issue)
-            raise ValueError(issue)
-
-    def create_callbacks(self, checkpoint_path):
-        """
-        Create a list of tf.keras.callbacks.
-        Args:
-            checkpoint_path: Full path to checkpoint.
-
-        Returns:
-            callbacks.
-        """
-        return [
-            ReduceLROnPlateau(verbose=1, patience=4),
-            ModelCheckpoint(os.path.join(checkpoint_path), verbose=1, save_weights_only=True,),
-            TensorBoard(log_dir=os.path.join(self.output_path, "Logs")),
-            EarlyStopping(monitor="val_loss", patience=6, verbose=1),
-        ]
-
-    @logged_timer()
-    def train(
-        self,
-        epochs,
-        batch_size,
-        learning_rate,
-        new_anchors_conf=None,
-        new_dataset_conf=None,
-        dataset_name=None,
-        weights=None,
-        evaluate=True,
-        merge_evaluation=True,
-        evaluation_workers=8,
-        shuffle_buffer=512,
-        min_overlaps=None,
-        display_stats=True,
-        plot_stats=True,
-        save_figs=True,
-        clear_outputs=False,
-        n_epoch_eval=None,
-    ):
-        """
-        Train on the dataset.
-        Args:
-            epochs: Number of training epochs.
-            batch_size: Training batch size.
-            learning_rate: non-negative value.
-            new_anchors_conf: A dictionary containing anchor generation configuration.
-            new_dataset_conf: A dictionary containing dataset generation configuration.
-            dataset_name: Name of the dataset for model checkpoints.
-            weights: .tf or .weights file
-            evaluate: If False, the trained model will not be evaluated after training.
-            merge_evaluation: If False, training and validation maps will
-                be calculated separately.
-            evaluation_workers: Parallel predictions.
-            shuffle_buffer: Buffer size for shuffling datasets.
-            min_overlaps: a float value between 0 and 1, or a dictionary
-                containing each class in self.class_names mapped to its
-                minimum overlap
-            display_stats: If True and evaluate=True, evaluation statistics will be displayed.
-            plot_stats: If True, Precision and recall curves as well as
-                comparative bar charts will be plotted
-            save_figs: If True and plot_stats=True, figures will be saved
-            clear_outputs: If True, old outputs will be cleared
-            n_epoch_eval: Conduct evaluation every n epoch.
-
-        Returns:
-            history object, pandas DataFrame with statistics, mAP score.
-        """
-        min_overlaps = min_overlaps or 0.5
-        if clear_outputs:
-            self.clear_outputs()
-        activate_gpu()
-        self.logger.info(f"Starting training ...")
-        if new_anchors_conf:
-            # TODO: add flag to train anchors automatically
-            self.logger.info(f"Generating new anchors ...")
-            self.generate_new_anchors(new_anchors_conf)
-        self.create_models()
-        if weights:
-            self.load_weights(weights)
-        if new_dataset_conf:
-            self.create_new_dataset(new_dataset_conf)
-        self.check_tf_records()
-        training_dataset = self.initialize_dataset(self.train_tf_record, batch_size, shuffle_buffer)
-        valid_dataset = self.initialize_dataset(self.valid_tf_record, batch_size, shuffle_buffer)
-        optimizer = tf.keras.optimizers.Adam(learning_rate)
-        loss = [
-            calculate_loss(self.anchors[mask], self.classes, self.iou_threshold)
-            for mask in self.masks
-        ]
-        self.training_model.compile(optimizer=optimizer, loss=loss)
-        checkpoint_path = os.path.join(
-            self.output_path, "models", f'{dataset_name or "trained"}_model.tf'
-        )
-        callbacks = self.create_callbacks(checkpoint_path)
-        if n_epoch_eval:
-            mid_train_eval = MidTrainingEvaluator(
-                self.input_shape,
-                self.model_configuration,
-                self.classes_file,
-                self.image_width,
-                self.image_height,
-                self.train_tf_record,
-                self.valid_tf_record,
-                self.anchors,
-                self.masks,
-                self.max_boxes,
-                self.iou_threshold,
-                self.score_threshold,
-                n_epoch_eval,
-                merge_evaluation,
-                evaluation_workers,
-                shuffle_buffer,
-                min_overlaps,
-                display_stats,
-                plot_stats,
-                save_figs,
-                checkpoint_path,
+            logging.info(
+                "{}, train: {}, val: {}".format(
+                    epoch, avg_loss.result().numpy(), avg_val_loss.result().numpy()
+                )
             )
-            callbacks.append(mid_train_eval)
-        history = self.training_model.fit(
-            training_dataset, epochs=epochs, callbacks=callbacks, validation_data=valid_dataset,
-        )
-        self.logger.info("Training complete")
-        if evaluate:
-            evaluations = self.evaluate(
-                checkpoint_path,
-                merge_evaluation,
-                evaluation_workers,
-                shuffle_buffer,
-                min_overlaps,
-                display_stats,
-                plot_stats,
-                save_figs,
-            )
-            return evaluations, history
-        return history
 
+            avg_loss.reset_states()
+            avg_val_loss.reset_states()
+            model.save_weights("checkpoints/yolov3_train_{}.tf".format(epoch))
+    else:
+        model.compile(optimizer=optimizer, loss=loss, run_eagerly=(FLAGS.mode == "eager_fit"))
 
-class MidTrainingEvaluator(Callback, Trainer):
-    """
-    Tool to evaluate trained model on the go(during the training, every n epochs).
-    """
-
-    def __init__(
-        self,
-        input_shape,
-        model_configuration,
-        classes_file,
-        image_width,
-        image_height,
-        train_tf_record,
-        valid_tf_record,
-        anchors,
-        masks,
-        max_boxes,
-        iou_threshold,
-        score_threshold,
-        n_epochs,
-        merge,
-        workers,
-        shuffle_buffer,
-        min_overlaps,
-        display_stats,
-        plot_stats,
-        save_figs,
-        weights_file,
-    ):
-        """
-        Initialize mid-training evaluation settings.
-        Args:
-            input_shape: tuple, (n, n, c)
-            model_configuration: Path to DarkNet cfg file.
-            classes_file: File containing class names \n delimited.
-            image_width: Width of the original image.
-            image_height: Height of the original image.
-            train_tf_record: TFRecord file.
-            valid_tf_record: TFRecord file.
-            anchors: numpy array of (w, h) pairs.
-            masks: numpy array of masks.
-            max_boxes: Maximum boxes of the TFRecords provided(if any) or
-                maximum boxes setting.
-            iou_threshold: float, values less than the threshold are ignored.
-            score_threshold: float, values less than the threshold are ignored.
-            n_epochs: int, perform evaluation every n epochs
-            merge: If True, The whole dataset(train + valid) will be evaluated
-            workers: Parallel predictions
-            shuffle_buffer: Buffer size for shuffling datasets
-            min_overlaps: a float value between 0 and 1, or a dictionary
-                containing each class in self.class_names mapped to its
-                minimum overlap
-            display_stats: If True, statistics will be displayed at the end.
-            plot_stats: If True, precision and recall curves as well as
-                comparison bar charts will be plotted.
-            save_figs: If True and display_stats, plots will be save to Output folder
-            weights_file: .tf file(most recent checkpoint)
-        """
-        Trainer.__init__(
-            self,
-            input_shape,
-            model_configuration,
-            classes_file,
-            image_width,
-            image_height,
-            train_tf_record,
-            valid_tf_record,
-            anchors,
-            masks,
-            max_boxes,
-            iou_threshold,
-            score_threshold,
-        )
-        self.n_epochs = n_epochs
-        self.evaluation_args = [
-            weights_file,
-            merge,
-            workers,
-            shuffle_buffer,
-            min_overlaps,
-            display_stats,
-            plot_stats,
-            save_figs,
+        callbacks = [
+            ReduceLROnPlateau(verbose=1),
+            EarlyStopping(patience=3, verbose=1),
+            ModelCheckpoint(
+                "checkpoints/yolov3_train_{epoch}.tf", verbose=1, save_weights_only=True
+            ),
+            TensorBoard(log_dir="logs"),
         ]
 
-    def on_epoch_end(self, epoch, logs=None):
-        """
-        Start evaluation in valid epochs.
-        Args:
-            epoch: int, epoch number.
-            logs: dict, TensorBoard log.
-
-        Returns:
-            None
-        """
-        if not (epoch + 1) % self.n_epochs == 0:
-            return
-        self.evaluate(*self.evaluation_args)
-        evaluation_dir = str(
-            Path(os.path.join("", "Output", "Evaluation", f"epoch-{epoch}-evaluation"))
-            .absolute()
-            .resolve()
+        history = model.fit(
+            train_dataset, epochs=FLAGS.epochs, callbacks=callbacks, validation_data=val_dataset
         )
-        os.mkdir(evaluation_dir)
-        current_predictions = [
-            str(Path(os.path.join("", "Output", "Data", item)).absolute().resolve())
-            for item in os.listdir(os.path.join("", "Output", "Data"))
-        ]
-        current_figures = [
-            str(Path(os.path.join("", "Output", "Plots", item)).absolute().resolve())
-            for item in os.listdir(os.path.join("", "Output", "Plots"))
-        ]
-        current_files = current_predictions + current_figures
-        for file_path in current_files:
-            if os.path.isfile(file_path):
-                file_name = os.path.basename(file_path)
-                new_path = os.path.join(evaluation_dir, file_name)
-                shutil.move(file_path, new_path)
+
+
+if __name__ == "__main__":
+    app.run(main)
