@@ -272,8 +272,8 @@ def convert_to_tf_records(group: data) -> tf.train.Example:
     width = object["image_width"].iloc[0]
     xmin = object["xmin"].apply(lambda x: x / width)
     xmax = object["xmax"].apply(lambda x: x / width)
-    ymin = object["ymin"].apply(lambda x: x / height)
-    ymax = object["ymax"].apply(lambda x: x / height)
+    ymin = object["ymin"].apply(lambda y: y / height)
+    ymax = object["ymax"].apply(lambda y: y / height)
     return tf.train.Example(
         features=tf.train.Features(
             feature={
@@ -324,10 +324,13 @@ def write_to_record(dataset: DataFrame, output_dir: str, name: str, size: tuple 
     """
     output_path = path.join(output_dir, f"{name}.tfrecord")
     writer = tf.compat.v1.python_io.TFRecordWriter(output_path)
+    # TODO: remove 10 index slice
     grouped_train = split(dataset, "tiff_file")
     filenames = [filename for filename, _ in grouped_train]
     all_data = DataFrame()
     for image, output in tqdm(grouped_train):
+        height = output['image_height'].iloc[0]
+        output['y_pixel'] = output['y_pixel'].apply(lambda y: height - y)
         converted = extrapolate_crops_output(image, output, size)
         if converted is not None:
             all_data = pd_concat([all_data, *[data.object for data in converted]])

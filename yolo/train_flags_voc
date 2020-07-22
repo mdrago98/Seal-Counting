@@ -1,0 +1,5 @@
+--dataset=../data/data_files/voc2012_train.tfrecord
+--val_dataset=../data/data_files/voc2012_test.tfrecord
+--classes=../data/voc.names
+--epochs=100
+--mode=fit

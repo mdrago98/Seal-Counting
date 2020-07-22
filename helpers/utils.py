@@ -16,10 +16,10 @@ from xml.etree import ElementTree
 from lxml import etree
 from tensorflow.keras.layers import Layer
 from tensorflow.python.util.tf_export import keras_export
-import tensorflow_addons as tfa
+# import tensorflow_addons as tfa
 from tensorflow.python.keras.utils import tf_utils
 
-tfa.options.TF_ADDONS_PY_OPS = True
+# tfa.options.TF_ADDONS_PY_OPS = True
 
 
 def get_logger():
@@ -376,19 +376,19 @@ def calculate_display_data(
     fr.to_csv(out, index=False)
 
 
-@keras_export('keras.layers.Mish')
-class Mish(Layer):
-    """
-    Mish new activation function
-    """
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.supports_masking = True
-
-    def call(self, inputs, *args, **kwargs):
-        return tfa.activations.mish(inputs)
-
-    @tf_utils.shape_type_conversion
-    def compute_output_shape(self, input_shape):
-        return input_shape
+# @keras_export('keras.layers.Mish')
+# class Mish(Layer):
+#     """
+#     Mish new activation function
+#     """
+#
+#     def __init__(self, **kwargs):
+#         super().__init__(**kwargs)
+#         self.supports_masking = True
+#
+#     def call(self, inputs, *args, **kwargs):
+#         return tfa.activations.mish(inputs)
+#
+#     @tf_utils.shape_type_conversion
+#     def compute_output_shape(self, input_shape):
+#         return input_shape

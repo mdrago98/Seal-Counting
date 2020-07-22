@@ -92,7 +92,7 @@ class HorizontalFlip:
         return img, bboxes
 
 
-class RandomScale(object):
+class RandomScale:
     """Randomly scales an image    
     
     
