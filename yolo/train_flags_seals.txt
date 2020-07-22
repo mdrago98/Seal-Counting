@@ -1,4 +1,0 @@
---train_dataset /data2/seals/tfrecords/416/train.tfrecord
---val_dataset /data2/seals/tfrecords/416/test.tfrecord
---classes /data2/seals/tfrecords/416/416/classes.txt
---epochs 100

@@ -10,20 +10,20 @@ from tensorflow.keras.callbacks import (
     ModelCheckpoint,
     TensorBoard
 )
-from yolo.models_v3 import (
+from yolov3_tf2.models import (
     YoloV3, YoloV3Tiny, YoloLoss,
     yolo_anchors, yolo_anchor_masks,
     yolo_tiny_anchors, yolo_tiny_anchor_masks
 )
-from yolo.utils import freeze_all
-import data.dataset as dataset
+from yolov3_tf2.utils import freeze_all
+import yolov3_tf2.dataset as dataset
 
-flags.DEFINE_string('dataset', '', 'path to dataset')
-flags.DEFINE_string('val_dataset', '', 'path to validation dataset')
+flags.DEFINE_string('dataset', '/data2/seals/tfrecords/416/train.tfrecords', 'path to dataset')
+flags.DEFINE_string('val_dataset', '/data2/seals/tfrecords/416/test.tfrecords', 'path to validation dataset')
 flags.DEFINE_boolean('tiny', False, 'yolov3 or yolov3-tiny')
 flags.DEFINE_string('weights', './checkpoints/yolov3.tf',
                     'path to weights file')
-flags.DEFINE_string('classes', './data/coco.names', 'path to classes file')
+flags.DEFINE_string('classes', './data/data_files/coco.names', 'path to classes file')
 flags.DEFINE_enum('mode', 'fit', ['fit', 'eager_fit', 'eager_tf'],
                   'fit: model.fit, '
                   'eager_fit: model.fit(run_eagerly=True), '

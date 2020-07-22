@@ -137,7 +137,7 @@ def YoloConvTiny(filters, name=None):
     return yolo_conv
 
 
-def YoloOutput(filters, anchors: np.array, classes: int, name=None):
+def YoloOutput(filters, anchors, classes, name=None):
     def yolo_output(x_in):
         x = inputs = Input(x_in.shape[1:])
         x = DarknetConv(x, filters * 2, 3)
@@ -148,7 +148,7 @@ def YoloOutput(filters, anchors: np.array, classes: int, name=None):
     return yolo_output
 
 
-def yolo_boxes(pred, anchors, classes: int):
+def yolo_boxes(pred, anchors, classes):
     # pred: (batch_size, grid, grid, anchors, (x, y, w, h, obj, ...classes))
     grid_size = tf.shape(pred)[1:3]
     box_xy, box_wh, objectness, class_probs = tf.split(
@@ -256,7 +256,7 @@ def YoloV3Tiny(size=None, channels=3, anchors=yolo_tiny_anchors,
     return Model(inputs, outputs, name='yolov3_tiny')
 
 
-def YoloLoss(anchors: np.array, classes: int = 80, ignore_thresh: float = 0.5):
+def YoloLoss(anchors, classes=80, ignore_thresh=0.5):
     def yolo_loss(y_true, y_pred):
         # 1. transform all pred outputs
         # y_pred: (batch_size, grid, grid, anchors, (x, y, w, h, obj, ...cls))
