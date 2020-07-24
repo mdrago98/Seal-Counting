@@ -288,9 +288,7 @@ def convert_to_tf_records(group: data) -> tf.train.Example:
                 "image/object/bbox/xmax": tf_example_utils.float_list_feature(xmax.tolist()),
                 "image/object/bbox/ymin": tf_example_utils.float_list_feature(ymin.tolist()),
                 "image/object/bbox/ymax": tf_example_utils.float_list_feature(ymax.tolist()),
-                "image/object/class/label": tf_example_utils.int64_list_feature(
-                    object["layer_name"].tolist()
-                ),
+                "image/object/class/text": tf_example_utils.string_list(object["layer_name"]),
                 "image/object/bbox/x_pixel": tf_example_utils.float_list_feature(
                     object["x_pixel"].tolist()
                 ),
@@ -329,9 +327,10 @@ def write_to_record(dataset: DataFrame, output_dir: str, name: str, size: tuple 
     filenames = [filename for filename, _ in grouped_train]
     all_data = DataFrame()
     for image, output in tqdm(grouped_train):
-        height = output['image_height'].iloc[0]
-        output['y_pixel'] = output['y_pixel'].apply(lambda y: height - y)
-        converted = extrapolate_crops_output(image, output, size)
+        height = output["image_height"].iloc[0]
+        transformed_out = output.copy()
+        transformed_out["y_pixel"] = transformed_out["y_pixel"].apply(lambda y: height - y)
+        converted = extrapolate_crops_output(image, transformed_out, size)
         if converted is not None:
             all_data = pd_concat([all_data, *[data.object for data in converted]])
             for converted_object in converted:
@@ -339,6 +338,7 @@ def write_to_record(dataset: DataFrame, output_dir: str, name: str, size: tuple 
                 writer.write(tf_example.SerializeToString())
     all_records_path = path.join(output_dir, f"{size[0]}_{name}_all_records.csv")
     logger.info(f"Writing all normalised records to {all_records_path=}")
+    all_data.drop_duplicates(keep=False, inplace=True)
     all_data.to_csv(path.join(output_dir, f"{size[0]}_{name}_all_records.csv"))
     writer.flush()
     writer.close()
@@ -376,14 +376,17 @@ def main(argv: list):
     )
     write_classes(output_dir, list(locations["layer_name"].dropna().unique()))
     locations = clean_data(locations)
-    train, test = train_test_split(
-        locations, stratify=locations[["layer_name"]], train_size=FLAGS.train_size, random_state=42
-    )
+    file_names = locations["tiff_file"].unique()
+    train, test = train_test_split(file_names, train_size=FLAGS.train_size, random_state=42)
     logger.info(f"Cleaned the dataset generating tf_records")
     logger.info("Generating training records")
-    write_to_record(train, FLAGS.output_location, "train", size=out_size)
+    write_to_record(
+        locations[locations["tiff_file"].isin(train)], FLAGS.output_location, "train", size=out_size
+    )
     logger.info("Generating testing records")
-    write_to_record(test, FLAGS.output_location, "test", size=out_size)
+    write_to_record(
+        locations[locations["tiff_file"].isin(test)], FLAGS.output_location, "test", size=out_size
+    )
 
 
 if __name__ == "__main__":

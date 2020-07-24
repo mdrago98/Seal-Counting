@@ -1,3 +1,5 @@
+import os
+
 from absl import app, flags, logging
 from absl.flags import FLAGS
 
@@ -22,13 +24,9 @@ from yolov3_tf2.models import (
 from yolov3_tf2.utils import freeze_all
 import yolov3_tf2.dataset as dataset
 
+flags.DEFINE_string("dataset", "/data2/seals/tfrecords/416_10/train.tfrecord", "path to dataset")
 flags.DEFINE_string(
-    "dataset", "/data2/seals/tfrecords/416/train.tfrecords", "path to dataset"
-)
-flags.DEFINE_string(
-    "val_dataset",
-    "/data2/seals/tfrecords/416/test.tfrecords",
-    "path to validation dataset",
+    "val_dataset", "/data2/seals/tfrecords/416_10/test.tfrecord", "path to validation dataset",
 )
 flags.DEFINE_boolean("tiny", False, "yolov3 or yolov3-tiny")
 flags.DEFINE_string("weights", "./checkpoints/yolov3.tf", "path to weights file")
@@ -37,9 +35,7 @@ flags.DEFINE_enum(
     "mode",
     "fit",
     ["fit", "eager_fit", "eager_tf"],
-    "fit: model.fit, "
-    "eager_fit: model.fit(run_eagerly=True), "
-    "eager_tf: custom GradientTape",
+    "fit: model.fit, " "eager_fit: model.fit(run_eagerly=True), " "eager_tf: custom GradientTape",
 )
 flags.DEFINE_enum(
     "transfer",
@@ -52,7 +48,7 @@ flags.DEFINE_enum(
     "fine_tune: Transfer all and freeze darknet only",
 )
 flags.DEFINE_integer("size", 416, "image size")
-flags.DEFINE_integer("epochs", 2, "number of epochs")
+flags.DEFINE_integer("epochs", 100, "number of epochs")
 flags.DEFINE_integer("batch_size", 8, "batch size")
 flags.DEFINE_float("learning_rate", 1e-3, "learning rate")
 flags.DEFINE_integer("num_classes", 80, "number of classes in the model")
@@ -62,6 +58,7 @@ flags.DEFINE_integer(
     "specify num class for `weights` file if different, "
     "useful in transfer learning with different number of classes",
 )
+flags.DEFINE_string("out_dir", "/home/md273/model_zoo/416_eager/", "the model output")
 
 
 def main(_argv):
@@ -78,10 +75,7 @@ def main(_argv):
         anchors = yolo_anchors
         anchor_masks = yolo_anchor_masks
 
-    # train_dataset = dataset.load_fake_dataset()
-    train_dataset = dataset.load_tfrecord_dataset(
-        FLAGS.dataset, FLAGS.classes, FLAGS.size
-    )
+    train_dataset = dataset.load_tfrecord_dataset(FLAGS.dataset, FLAGS.classes, FLAGS.size)
     train_dataset = train_dataset.shuffle(buffer_size=512)
     train_dataset = train_dataset.batch(FLAGS.batch_size)
     train_dataset = train_dataset.map(
@@ -93,9 +87,7 @@ def main(_argv):
     train_dataset = train_dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
     # val_dataset = dataset.load_fake_dataset()
-    val_dataset = dataset.load_tfrecord_dataset(
-        FLAGS.val_dataset, FLAGS.classes, FLAGS.size
-    )
+    val_dataset = dataset.load_tfrecord_dataset(FLAGS.val_dataset, FLAGS.classes, FLAGS.size)
     val_dataset = val_dataset.batch(FLAGS.batch_size)
     val_dataset = val_dataset.map(
         lambda x, y: (
@@ -114,15 +106,11 @@ def main(_argv):
         # reset top layers
         if FLAGS.tiny:
             model_pretrained = YoloV3Tiny(
-                FLAGS.size,
-                training=True,
-                classes=FLAGS.weights_num_classes or FLAGS.num_classes,
+                FLAGS.size, training=True, classes=FLAGS.weights_num_classes or FLAGS.num_classes,
             )
         else:
             model_pretrained = YoloV3(
-                FLAGS.size,
-                training=True,
-                classes=FLAGS.weights_num_classes or FLAGS.num_classes,
+                FLAGS.size, training=True, classes=FLAGS.weights_num_classes or FLAGS.num_classes,
             )
         model_pretrained.load_weights(FLAGS.weights)
 
@@ -209,25 +197,24 @@ def main(_argv):
             avg_val_loss.reset_states()
             model.save_weights("checkpoints/yolov3_train_{}.tf".format(epoch))
     else:
-        model.compile(
-            optimizer=optimizer, loss=loss, run_eagerly=(FLAGS.mode == "eager_fit")
-        )
+        model.compile(optimizer=optimizer, loss=loss, run_eagerly=(FLAGS.mode == "eager_fit"))
 
         callbacks = [
             ReduceLROnPlateau(verbose=1),
             EarlyStopping(patience=3, verbose=1),
             ModelCheckpoint(
-                "checkpoints/yolov3_train_{epoch}.tf", verbose=1, save_weights_only=True
+                os.path.join(FLAGS.out_dir, "checkpoints/yolov3_train_{epoch}.tf"),
+                verbose=1,
+                save_weights_only=True,
             ),
             TensorBoard(log_dir="logs"),
         ]
 
         history = model.fit(
-            train_dataset,
-            epochs=FLAGS.epochs,
-            callbacks=callbacks,
-            validation_data=val_dataset,
+            train_dataset, epochs=FLAGS.epochs, callbacks=callbacks, validation_data=val_dataset,
         )
+        logging.info(history)
+        model.save(os.path.join(FLAGS.out_dir, "model"))
 
 
 if __name__ == "__main__":
