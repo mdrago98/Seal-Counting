@@ -12,6 +12,8 @@ from tensorflow.keras.callbacks import (
     ModelCheckpoint,
     TensorBoard,
 )
+
+from helpers.anchors import k_means, generate_anchors
 from yolov3_tf2.models import (
     YoloV3,
     YoloV3Tiny,
@@ -21,12 +23,14 @@ from yolov3_tf2.models import (
     yolo_tiny_anchors,
     yolo_tiny_anchor_masks,
 )
-from yolov3_tf2.utils import freeze_all
+from yolov3_tf2.utils import freeze_all, draw_outputs
 import yolov3_tf2.dataset as dataset
+from helpers import utils
 
-flags.DEFINE_string("dataset", "/data2/seals/tfrecords/416_10/train.tfrecord", "path to dataset")
+
+flags.DEFINE_string("dataset", "/data2/seals/tfrecords/416/train.tfrecord", "path to dataset")
 flags.DEFINE_string(
-    "val_dataset", "/data2/seals/tfrecords/416_10/test.tfrecord", "path to validation dataset",
+    "val_dataset", "/data2/seals/tfrecords/416/test.tfrecord", "path to validation dataset",
 )
 flags.DEFINE_boolean("tiny", False, "yolov3 or yolov3-tiny")
 flags.DEFINE_string("weights", "./checkpoints/yolov3.tf", "path to weights file")
@@ -49,7 +53,7 @@ flags.DEFINE_enum(
 )
 flags.DEFINE_integer("size", 416, "image size")
 flags.DEFINE_integer("epochs", 100, "number of epochs")
-flags.DEFINE_integer("batch_size", 8, "batch size")
+flags.DEFINE_integer("batch_size", 20, "batch size")
 flags.DEFINE_float("learning_rate", 1e-3, "learning rate")
 flags.DEFINE_integer("num_classes", 80, "number of classes in the model")
 flags.DEFINE_integer(
@@ -59,6 +63,31 @@ flags.DEFINE_integer(
     "useful in transfer learning with different number of classes",
 )
 flags.DEFINE_string("out_dir", "/home/md273/model_zoo/416_eager/", "the model output")
+
+
+def create_img_summary(records: tf.data.Dataset, file_writer, take: int = 10) -> None:
+    with file_writer.as_default():
+        for x, y in records.take(take):
+            if x1 == 0 and x2 == 0:
+                continue
+            boxes = []
+            scores = []
+            classes = []
+            for x1, y1, x2, y2, label in y:
+                if x1 == 0 and x2 == 0:
+                    continue
+
+                boxes.append((x1, y1, x2, y2))
+                scores.append(1)
+                classes.append(label)
+            nums = [len(boxes)]
+            boxes = [boxes]
+            scores = [scores]
+            classes = [classes]
+            img = cv2.cvtColor(x.numpy(), cv2.COLOR_RGB2BGR)
+            img = draw_outputs(img, (boxes, scores, classes, nums), classes)
+            rgb_tensor = tf.convert_to_tensor(img, dtype=tf.float32)
+            tf.summary.image("Training data", rgb_tensor, step=0)
 
 
 def main(_argv):
@@ -81,7 +110,7 @@ def main(_argv):
     train_dataset = train_dataset.map(
         lambda x, y: (
             dataset.transform_images(x, FLAGS.size),
-            dataset.transform_targets(y, anchors, anchor_masks, FLAGS.size),
+            utils.transform_targets(y, anchors, anchor_masks, FLAGS.size),
         )
     )
     train_dataset = train_dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
@@ -92,7 +121,7 @@ def main(_argv):
     val_dataset = val_dataset.map(
         lambda x, y: (
             dataset.transform_images(x, FLAGS.size),
-            dataset.transform_targets(y, anchors, anchor_masks, FLAGS.size),
+            utils.transform_targets(y, anchors, anchor_masks, FLAGS.size),
         )
     )
 
@@ -207,7 +236,7 @@ def main(_argv):
                 verbose=1,
                 save_weights_only=True,
             ),
-            TensorBoard(log_dir="logs"),
+            TensorBoard(os.path.join(FLAGS.out_dir, "logs")),
         ]
 
         history = model.fit(

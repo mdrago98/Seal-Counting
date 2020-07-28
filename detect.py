@@ -10,14 +10,14 @@ from yolov3_tf2.models import (
 from yolov3_tf2.dataset import transform_images, load_tfrecord_dataset
 from yolov3_tf2.utils import draw_outputs
 
-flags.DEFINE_string('classes', './data/coco.names', 'path to classes file')
-flags.DEFINE_string('weights', './checkpoints/yolov3.tf',
+flags.DEFINE_string('classes', './data/data_files/seal.names', 'path to classes file')
+flags.DEFINE_string('weights', '/home/md273/model_zoo/416_eager/checkpoints/yolov3_train_7.tf',
                     'path to weights file')
 flags.DEFINE_boolean('tiny', False, 'yolov3 or yolov3-tiny')
 flags.DEFINE_integer('size', 416, 'resize images to')
 flags.DEFINE_string('image', './data/girl.png', 'path to input image')
-flags.DEFINE_string('tfrecord', None, 'tfrecord instead of image')
-flags.DEFINE_string('output', './output.jpg', 'path to output image')
+flags.DEFINE_string('tfrecord', '/data2/seals/tfrecords/416/test.tfrecord', 'tfrecord instead of image')
+flags.DEFINE_string('output', '/home/md273/model_zoo/416_eager/output.jpg', 'path to output image')
 flags.DEFINE_integer('num_classes', 80, 'number of classes in the model')
 
 
@@ -32,6 +32,8 @@ def main(_argv):
         yolo = YoloV3(classes=FLAGS.num_classes)
 
     yolo.load_weights(FLAGS.weights).expect_partial()
+
+    # yolo.load_weights(FLAGS.weights).expect_partial()
     logging.info('weights loaded')
 
     class_names = [c.strip() for c in open(FLAGS.classes).readlines()]
@@ -40,7 +42,7 @@ def main(_argv):
     if FLAGS.tfrecord:
         dataset = load_tfrecord_dataset(
             FLAGS.tfrecord, FLAGS.classes, FLAGS.size)
-        dataset = dataset.shuffle(512)
+        dataset = dataset.shuffle(20)
         img_raw, _label = next(iter(dataset.take(1)))
     else:
         img_raw = tf.image.decode_image(

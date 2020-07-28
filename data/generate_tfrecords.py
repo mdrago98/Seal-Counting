@@ -1,5 +1,6 @@
 from collections import namedtuple
 from io import BytesIO
+from itertools import permutations
 from os import path
 from random import randint
 from typing import Callable
@@ -12,13 +13,9 @@ from pathlib import Path
 from absl import flags, app, logging as logger
 from tqdm import tqdm
 from os import getcwd
-from data import (
-    BBox,
-    generate_bbox,
-    get_bbox,
-    is_in_bounding_box,
-    normalise_coordinates,
-)
+
+from data.image_handler import get_bbox, is_in_bounding_box, normalise_coordinates, generate_bbox, extract_intervals, \
+    BBox
 from data.utils import tf_example_utils
 from data.pipeline import PIPELINE
 from sklearn.model_selection import train_test_split
@@ -209,13 +206,14 @@ def extrapolate_crops_output(
         try:
             with Image.open(img_path) as img:
                 # TODO refactor code to crop image using PIL + refactor extrapolate image to
-                #  TODO: iterate over all crops
-                crop_box = get_seal_cropping_region(outputs, size)[
-                    ["x_min", "y_min", "x_max", "y_max"]
-                ]
-                for index, row in crop_box.iterrows():
+                # crop_box = get_seal_cropping_region(outputs, size)[
+                #     ["x_min", "y_min", "x_max", "y_max"]
+                # ]
+                intervals = extract_intervals(img.size, size)
+                intervals = list(permutations(intervals[0], r=2))
+                for i, (x, y) in enumerate(intervals):
                     box: BBox = get_bbox(
-                        (row["x_min"], row["x_max"]), (row["y_min"], row["y_max"]),
+                        (x[0], x[1]), (y[0], y[1]),
                     )
                     cropped = img.crop((box.x_min, box.y_min, box.x_max, box.y_max,))
                     img_val = BytesIO()
@@ -236,7 +234,7 @@ def extrapolate_crops_output(
         except Exception as e:
             logger.error(e.__str__())
     else:
-        logger.warn(f"Image {img_path} not found")
+        logger.warning(f"Image {img_path} not found")
     return transformed
 
 
@@ -260,7 +258,7 @@ def generate_object_bbox(
     return locations
 
 
-def convert_to_tf_records(group: data) -> tf.train.Example:
+def convert_to_tf_records(group: data, size: tuple, name) -> tf.train.Example:
     """
     A function to convert the group into a tf record
     :param group: the data named tuple group
@@ -268,8 +266,8 @@ def convert_to_tf_records(group: data) -> tf.train.Example:
     """
     object = group.object
     image = group.filename
-    height = object["image_height"].iloc[0]
-    width = object["image_width"].iloc[0]
+    height = object["image_height"].get(0, size[0])
+    width = object["image_width"].get(0, size[0])
     xmin = object["xmin"].apply(lambda x: x / width)
     xmax = object["xmax"].apply(lambda x: x / width)
     ymin = object["ymin"].apply(lambda y: y / height)
@@ -280,7 +278,7 @@ def convert_to_tf_records(group: data) -> tf.train.Example:
                 "image/height": tf_example_utils.int64_feature(height),
                 "image/width": tf_example_utils.int64_feature(width),
                 "image/source_id": tf_example_utils.bytes_feature(
-                    object["tiff_file"].iloc[0].encode()
+                    object["tiff_file"].get(0, name).encode()
                 ),
                 "image/encoded": tf_example_utils.bytes_feature(image),
                 "image/format": tf_example_utils.bytes_feature("tif".encode()),
@@ -328,13 +326,14 @@ def write_to_record(dataset: DataFrame, output_dir: str, name: str, size: tuple 
     all_data = DataFrame()
     for image, output in tqdm(grouped_train):
         height = output["image_height"].iloc[0]
+        name = output['tiff_file'].get(0, 'default')
         transformed_out = output.copy()
         transformed_out["y_pixel"] = transformed_out["y_pixel"].apply(lambda y: height - y)
         converted = extrapolate_crops_output(image, transformed_out, size)
         if converted is not None:
             all_data = pd_concat([all_data, *[data.object for data in converted]])
             for converted_object in converted:
-                tf_example = convert_to_tf_records(converted_object)
+                tf_example = convert_to_tf_records(converted_object, size, name)
                 writer.write(tf_example.SerializeToString())
     all_records_path = path.join(output_dir, f"{size[0]}_{name}_all_records.csv")
     logger.info(f"Writing all normalised records to {all_records_path=}")
