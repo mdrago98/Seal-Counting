@@ -20,7 +20,9 @@ flags.DEFINE_boolean("tiny", False, "yolov3 or yolov3-tiny")
 flags.DEFINE_integer("size", 416, "resize images to")
 flags.DEFINE_string("image", "./data/girl.png", "path to input image")
 flags.DEFINE_string(
-    "tfrecord", "/data2/seals/tfrecords/416_all/train.tfrecord", "tfrecord instead of image"
+    "tfrecord",
+    "/data2/seals/tfrecords/416/train/StitchMICE_FoFcr16_2_1024_CP_FINAL.tfrecord",
+    "tfrecord instead of image",
 )
 flags.DEFINE_string(
     "output", "/home/md273/model_zoo/416_eager/results_test.pickle", "path to output image"
@@ -72,9 +74,10 @@ def omit_zero_vals(x: tf.Tensor) -> tf.Tensor:
     return tf.boolean_mask(x, bool_mask)
 
 
-def calculate_metrics(eval_data, model, sample: int = 100) -> dict:
+def calculate_metrics(eval_data, model) -> dict:
     eval_scores = {"inference_times": [], "ious": []}
     ious = []
+    all_truth = []
     for index, (image, labels) in enumerate(eval_data):
         t1 = time()
         boxes, scores, classes, nums = model(image)
@@ -82,10 +85,12 @@ def calculate_metrics(eval_data, model, sample: int = 100) -> dict:
         eval_scores["inference_times"].append(t2 - t1)
         # get first 4 cols from tensor and compute iou
         ious += [
-            bb_intersection_over_union(prediction, truth).numpy()
+            (index, bb_intersection_over_union(prediction, truth).numpy())
             for prediction, truth in zip(boxes[0], labels[:, :4])
-            if tf.reduce_sum(truth)[0] != 0
+            if tf.reduce_sum(prediction).numpy() != 0 or tf.reduce_sum(truth).numpy() != 0
         ]
+        all_truth += [(index, y.numpy()) for y in labels if tf.reduce_sum(y).numpy() != 0]
+
     return eval_scores
 
 

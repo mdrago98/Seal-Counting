@@ -1,3 +1,5 @@
+import os
+
 import tensorflow as tf
 from absl.flags import FLAGS
 
@@ -135,7 +137,7 @@ def load_tfrecord_dataset(file_pattern, class_file, size=416, max_boxes: int = 1
         -1,
     )
 
-    files = tf.data.Dataset.list_files(file_pattern)
+    files = tf.data.Dataset.list_files(os.path.join(file_pattern, "*.tfrecord"))
     dataset = files.flat_map(tf.data.TFRecordDataset)
     return dataset.map(lambda x: parse_tfrecord(x, class_table, size, max_boxes))
 

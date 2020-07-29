@@ -6,6 +6,7 @@ from absl.flags import FLAGS
 import tensorflow as tf
 import numpy as np
 import cv2
+from pandas import read_csv
 from tensorflow.keras.callbacks import (
     ReduceLROnPlateau,
     EarlyStopping,
@@ -13,7 +14,7 @@ from tensorflow.keras.callbacks import (
     TensorBoard,
 )
 
-from helpers.anchors import k_means, generate_anchors
+from kmeans import kmeans
 from yolov3_tf2.models import (
     YoloV3,
     YoloV3Tiny,
@@ -25,10 +26,9 @@ from yolov3_tf2.models import (
 )
 from yolov3_tf2.utils import freeze_all, draw_outputs
 import yolov3_tf2.dataset as dataset
-from helpers import utils
 
 
-flags.DEFINE_string("dataset", "/data2/seals/tfrecords/416/train.tfrecord", "path to dataset")
+flags.DEFINE_string("dataset", "/data2/seals/tfrecords/416/train", "path to dataset")
 flags.DEFINE_string(
     "val_dataset", "/data2/seals/tfrecords/416/test.tfrecord", "path to validation dataset",
 )
@@ -62,7 +62,7 @@ flags.DEFINE_integer(
     "specify num class for `weights` file if different, "
     "useful in transfer learning with different number of classes",
 )
-flags.DEFINE_string("out_dir", "/home/md273/model_zoo/416_eager/", "the model output")
+flags.DEFINE_string("out_dir", "/home/md273/model_zoo/416/", "the model output")
 
 
 def create_img_summary(records: tf.data.Dataset, file_writer, take: int = 10) -> None:
@@ -90,6 +90,17 @@ def create_img_summary(records: tf.data.Dataset, file_writer, take: int = 10) ->
             tf.summary.image("Training data", rgb_tensor, step=0)
 
 
+def is_test(x, y):
+    return x % 4 == 0
+
+
+def is_train(x, y):
+    return not is_test(x, y)
+
+
+recover = lambda x, y: y
+
+
 def main(_argv):
     physical_devices = tf.config.experimental.list_physical_devices("GPU")
     for physical_device in physical_devices:
@@ -101,7 +112,12 @@ def main(_argv):
         anchor_masks = yolo_tiny_anchor_masks
     else:
         model = YoloV3(FLAGS.size, training=True, classes=FLAGS.num_classes)
-        anchors = yolo_anchors
+        # TODO plugin flag
+        all_records = read_csv("/data2/seals/tfrecords/416/416_test_all_records.csv")
+        all_records["x_pixel"] = all_records["x_pixel"].apply(lambda x: x / FLAGS.size)
+        all_records["y_pixel"] = all_records["y_pixel"].apply(lambda y: y / FLAGS.size)
+        logging.info("Generating anchors")
+        anchors = kmeans(all_records[["x_pixel", "y_pixel"]].to_numpy(), 9)
         anchor_masks = yolo_anchor_masks
 
     train_dataset = dataset.load_tfrecord_dataset(FLAGS.dataset, FLAGS.classes, FLAGS.size)
@@ -110,20 +126,24 @@ def main(_argv):
     train_dataset = train_dataset.map(
         lambda x, y: (
             dataset.transform_images(x, FLAGS.size),
-            utils.transform_targets(y, anchors, anchor_masks, FLAGS.size),
+            dataset.transform_targets(y, anchors, anchor_masks, FLAGS.size),
         )
     )
     train_dataset = train_dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
+    val_dataset = train_dataset.enumerate().filter(is_test).map(recover)
+
+    train_dataset = train_dataset.enumerate().filter(is_train).map(recover)
+
     # val_dataset = dataset.load_fake_dataset()
-    val_dataset = dataset.load_tfrecord_dataset(FLAGS.val_dataset, FLAGS.classes, FLAGS.size)
-    val_dataset = val_dataset.batch(FLAGS.batch_size)
-    val_dataset = val_dataset.map(
-        lambda x, y: (
-            dataset.transform_images(x, FLAGS.size),
-            utils.transform_targets(y, anchors, anchor_masks, FLAGS.size),
-        )
-    )
+    # val_dataset = dataset.load_tfrecord_dataset(FLAGS.val_dataset, FLAGS.classes, FLAGS.size)
+    # val_dataset = val_dataset.batch(FLAGS.batch_size)
+    # val_dataset = val_dataset.map(
+    #     lambda x, y: (
+    #         dataset.transform_images(x, FLAGS.size),
+    #         dataset.transform_targets(y, anchors, anchor_masks, FLAGS.size),
+    #     )
+    # )
 
     # Configure the model for transfer learning
     if FLAGS.transfer == "none":

@@ -1,4 +1,5 @@
 from collections import namedtuple
+from functools import partial
 from io import BytesIO
 from itertools import permutations
 from os import path
@@ -10,16 +11,28 @@ import tensorflow as tf
 from pandas import DataFrame, read_excel, concat as pd_concat
 from PIL import Image
 from pathlib import Path
-from absl import flags, app, logging as logger
+from absl import flags, app
 from tqdm import tqdm
 from os import getcwd
 
-from data.image_handler import get_bbox, is_in_bounding_box, normalise_coordinates, generate_bbox, extract_intervals, \
-    BBox
+from helpers.utils import get_logger
+
+
+from data.image_handler import (
+    get_bbox,
+    is_in_bounding_box,
+    normalise_coordinates,
+    generate_bbox,
+    extract_intervals,
+    BBox,
+)
 from data.utils import tf_example_utils
 from data.pipeline import PIPELINE
 from sklearn.model_selection import train_test_split
 
+import multiprocessing
+
+from helpers.utils import timer
 
 Image.MAX_IMAGE_PIXELS = 99999999999999999999
 
@@ -42,11 +55,13 @@ flags.DEFINE_boolean(
 )
 flags.DEFINE_integer("image_size", 416, "The image size to crop to.")
 flags.DEFINE_float("train_size", 0.8, "The size of the training data")
-flags.DEFINE_float("validation", 0.2, "The size of the validation data")
+flags.DEFINE_float("validation", 0.2, "The size of the training data")
 
 
 data = namedtuple("data", ["filename", "object"])
 transformed_example = namedtuple("TransformedExample", ["filename", "encoded", "object"])
+
+logger = None
 
 
 def get_random_crop_coord(
@@ -188,7 +203,7 @@ def generate_crop_locations(
 
 
 def extrapolate_crops_output(
-    image: str, outputs: DataFrame, size: tuple, object_bbox: tuple = (60, 60), random_state=42
+    image: str, outputs: DataFrame, size: tuple, object_bbox: tuple = (60, 60), ignore_extrema=True
 ) -> list:
     """
     A function to extrapolate the cropped regions and normalise the related coordinates
@@ -196,7 +211,7 @@ def extrapolate_crops_output(
     :param outputs: the output dataframe
     :param image: the image file name
     :param size: the resulting size
-    :param random_state: the random seed to use when randomising crops
+    :param ignore_extrema: a boolean flag that when set True ignores the border whiteboxes
     :return: the list of data named tuples consisting of the cropped input image tensor and the output
     """
     transformed = []
@@ -216,6 +231,9 @@ def extrapolate_crops_output(
                         (x[0], x[1]), (y[0], y[1]),
                     )
                     cropped = img.crop((box.x_min, box.y_min, box.x_max, box.y_max,))
+                    extrema = cropped.convert("L").getextrema()
+                    if extrema[0] == extrema[1] and ignore_extrema:
+                        continue
                     img_val = BytesIO()
                     cropped.save(img_val, format="PNG")
                     box_filter = outputs[["x_pixel", "y_pixel"]].apply(
@@ -309,38 +327,68 @@ def split(dataset: DataFrame, group_key: str) -> list:
     return [data(filename, gb.get_group(x)) for filename, x in zip(gb.groups.keys(), gb.groups)]
 
 
-def write_to_record(dataset: DataFrame, output_dir: str, name: str, size: tuple = (416, 416)):
+@timer(logger)
+def write_to_record(
+    dataset: DataFrame,
+    output_dir: str,
+    name: str,
+    size: tuple = (416, 416),
+    ignore_border: bool = True,
+    n_jobs: int = 3,
+):
     """
     A function to write the dataset to tf records
+    :param ignore_border: a boolean flag indicating whether to ignore patches with the white border
+    :param n_jobs: number of concurrent processes
     :param dataset: the dataset dataframe
     :param output_dir: the output directory
     :param name: the name of the tf record
     :param size: the image crop size
     :return: None
     """
-    output_path = path.join(output_dir, f"{name}.tfrecord")
-    writer = tf.compat.v1.python_io.TFRecordWriter(output_path)
+
     # TODO: remove 10 index slice
     grouped_train = split(dataset, "tiff_file")
     filenames = [filename for filename, _ in grouped_train]
     all_data = DataFrame()
-    for image, output in tqdm(grouped_train):
-        height = output["image_height"].iloc[0]
-        name = output['tiff_file'].get(0, 'default')
-        transformed_out = output.copy()
-        transformed_out["y_pixel"] = transformed_out["y_pixel"].apply(lambda y: height - y)
-        converted = extrapolate_crops_output(image, transformed_out, size)
-        if converted is not None:
-            all_data = pd_concat([all_data, *[data.object for data in converted]])
-            for converted_object in converted:
-                tf_example = convert_to_tf_records(converted_object, size, name)
-                writer.write(tf_example.SerializeToString())
+    Path(path.join(output_dir, name)).mkdir(exist_ok=True, parents=True)
+    extract_island = partial(
+        extract_island_crops,
+        name=name,
+        output_dir=output_dir,
+        size=size,
+        ignore_border=ignore_border,
+    )
+    with multiprocessing.Pool(n_jobs) as pool:
+        for island_records in tqdm(
+            pool.imap_unordered(extract_island, grouped_train), total=len(grouped_train)
+        ):
+            all_data = pd_concat([all_data, island_records])
     all_records_path = path.join(output_dir, f"{size[0]}_{name}_all_records.csv")
     logger.info(f"Writing all normalised records to {all_records_path=}")
     all_data.drop_duplicates(keep=False, inplace=True)
-    all_data.to_csv(path.join(output_dir, f"{size[0]}_{name}_all_records.csv"))
+    all_data.to_csv(path.join(output_dir, name, f"records.csv"))
+
+
+def extract_island_crops(
+    record: data, name: str, output_dir: str, size: tuple, ignore_border: bool
+):
+    island, output = record
+    output_path = path.join(output_dir, name, f"{path.splitext(island)[0]}.tfrecord")
+    writer = tf.compat.v1.python_io.TFRecordWriter(output_path)
+    height = output["image_height"].iloc[0]
+    transformed_out = output.copy()
+    transformed_out["y_pixel"] = transformed_out["y_pixel"].apply(lambda y: height - y)
+    converted = extrapolate_crops_output(island, transformed_out, size)
+    island_records = DataFrame()
+    if converted is not None:
+        island_records = pd_concat([island_records, *[data.object for data in converted]])
+        for converted_object in converted:
+            tf_example = convert_to_tf_records(converted_object, size, name)
+            writer.write(tf_example.SerializeToString())
     writer.flush()
     writer.close()
+    return island_records
 
 
 def create_output_dir(output_dir: str, image_size: int) -> str:
@@ -355,8 +403,9 @@ def create_output_dir(output_dir: str, image_size: int) -> str:
     return output_path
 
 
-def write_classes(output_dir, classes: list, name="classes.txt"):
+def write_classes(output_dir, classes: list, name="seals.name"):
     output_dir = path.join(output_dir, name)
+    Path(output_dir).parent.mkdir(exist_ok=True, parents=True)
     logger.info(f"Writing classes to {output_dir}")
     with open(output_dir, "a") as file:
         logger.info("Writing class names to")
@@ -366,25 +415,42 @@ def write_classes(output_dir, classes: list, name="classes.txt"):
 
 def main(argv: list):
     # TODO: add flag for validation dataset
+    global logger
+    logger = get_logger(FLAGS.output_location)
     out_size = (FLAGS.image_size, FLAGS.image_size)
-    output_dir = create_output_dir(FLAGS.output_location, FLAGS.image_size)
     locations = read_excel(FLAGS.pixel_coord, sheet_name="PixelCoordinates",)
     file_props = read_excel(FLAGS.pixel_coord, sheet_name="FileOverview",).dropna()
     locations = locations.merge(
         file_props[["tiff_file", "image_width", "image_height"]], how="inner"
     )
-    write_classes(output_dir, list(locations["layer_name"].dropna().unique()))
+    write_classes(FLAGS.output_location, list(locations["layer_name"].dropna().unique()))
     locations = clean_data(locations)
-    file_names = locations["tiff_file"].unique()
-    train, test = train_test_split(file_names, train_size=FLAGS.train_size, random_state=42)
+    logger.info("Splitting the dataset into train, validation, testing")
+    train, validation, test = split_frame(locations)
     logger.info(f"Cleaned the dataset generating tf_records")
+
     logger.info("Generating training records")
+    write_to_record(train, FLAGS.output_location, "train", size=out_size)
+    logger.info("Generating validation records")
     write_to_record(
-        locations[locations["tiff_file"].isin(train)], FLAGS.output_location, "train", size=out_size
+        validation, FLAGS.output_location, "validation", size=out_size,
     )
     logger.info("Generating testing records")
-    write_to_record(
-        locations[locations["tiff_file"].isin(test)], FLAGS.output_location, "test", size=out_size
+    write_to_record(test, FLAGS.output_location, "test", size=out_size)
+
+
+def split_frame(locations):
+    file_names = locations["tiff_file"].unique()
+    train, test = train_test_split(file_names, train_size=FLAGS.train_size, random_state=42)
+    train, validation = train_test_split(
+        locations[locations["tiff_file"].isin(train)]["tiff_file"].unique(),
+        train_size=1 - FLAGS.validation,
+        random_state=42,
+    )
+    return (
+        locations[locations["tiff_file"].isin(train)],
+        locations[locations["tiff_file"].isin(validation)],
+        locations[locations["tiff_file"].isin(validation)],
     )
 
 
