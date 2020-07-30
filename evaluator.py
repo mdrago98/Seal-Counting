@@ -1,5 +1,8 @@
 import os
+from glob import glob
+from pathlib import Path
 
+import cv2
 from absl import app, flags, logging
 
 from yolov3_tf2 import dataset
@@ -20,9 +23,7 @@ flags.DEFINE_boolean("tiny", False, "yolov3 or yolov3-tiny")
 flags.DEFINE_integer("size", 416, "resize images to")
 flags.DEFINE_string("image", "./data/girl.png", "path to input image")
 flags.DEFINE_string(
-    "tfrecord",
-    "/data2/seals/tfrecords/416/train/StitchMICE_FoFcr16_2_1024_CP_FINAL.tfrecord",
-    "tfrecord instead of image",
+    "tfrecord", "/data2/seals/tfrecords/416/train", "tfrecord instead of image",
 )
 flags.DEFINE_string(
     "output", "/home/md273/model_zoo/416_eager/results_test.pickle", "path to output image"
@@ -75,22 +76,38 @@ def omit_zero_vals(x: tf.Tensor) -> tf.Tensor:
 
 
 def calculate_metrics(eval_data, model) -> dict:
-    eval_scores = {"inference_times": [], "ious": []}
+    eval_scores = {
+        "inference_times": [],
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 0,
+    }
     ious = []
-    all_truth = []
     for index, (image, labels) in enumerate(eval_data):
         t1 = time()
         boxes, scores, classes, nums = model(image)
         t2 = time()
         eval_scores["inference_times"].append(t2 - t1)
         # get first 4 cols from tensor and compute iou
-        ious += [
-            (index, bb_intersection_over_union(prediction, truth).numpy())
-            for prediction, truth in zip(boxes[0], labels[:, :4])
-            if tf.reduce_sum(prediction).numpy() != 0 or tf.reduce_sum(truth).numpy() != 0
-        ]
-        all_truth += [(index, y.numpy()) for y in labels if tf.reduce_sum(y).numpy() != 0]
-
+        for i, truth in enumerate(labels[:, :5]):
+            if (
+                tf.reduce_sum(truth).numpy() != 0
+                or tf.reduce_sum(boxes[0][i]) != 0
+                or tf.reduce_sum(scores[0][i]) != 0
+            ):
+                iou = bb_intersection_over_union(boxes[0][i], truth).numpy()
+                if scores[0][i] >= 0.5 and iou >= 0.5:
+                    eval_scores["true_positive"] += 1
+                elif iou < 0.5:
+                    eval_scores["false_positive"] += 1
+                elif scores[0][i] < 0.5:
+                    eval_scores["false_negative"] += 1
+    eval_scores["precision"] = (
+        eval_scores["true_positive"] / eval_scores["true_positive"] + eval_scores["false_positive"]
+    )
+    eval_scores["recall"] = (
+        eval_scores["true_positive"] / eval_scores["true_positive"] + eval_scores["false_positive"]
+    )
     return eval_scores
 
 
@@ -100,7 +117,8 @@ def main(_argv):
     logging.info("Weights loaded")
     class_names = [c.strip() for c in open(FLAGS.classes).readlines()]
     logging.info("Classes loaded")
-    eval_data = dataset.load_tfrecord_dataset(FLAGS.tfrecord, FLAGS.classes, FLAGS.size)
+    all_files = glob(os.path.join(FLAGS.tfrecord, "*.tfrecord"))[1:3]
+    eval_data = dataset.load_tfrecord_dataset(all_files, FLAGS.classes, FLAGS.size)
     eval_data = eval_data.map(lambda x, y: (tf.expand_dims(x, 0), y,))
     eval_data = eval_data.map(lambda x, y: (dataset.transform_images(x, FLAGS.size), y,))
     results = calculate_metrics(eval_data, yolo)

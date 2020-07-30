@@ -58,7 +58,7 @@ flags.DEFINE_float("train_size", 0.8, "The size of the training data")
 flags.DEFINE_float("validation", 0.2, "The size of the training data")
 
 
-data = namedtuple("data", ["filename", "object"])
+data = namedtuple("data", ["filename", "object", "interval"])
 transformed_example = namedtuple("TransformedExample", ["filename", "encoded", "object"])
 
 logger = None
@@ -248,7 +248,7 @@ def extrapolate_crops_output(
                     transformed_out["image_height"] = transformed_out["image_height"].apply(
                         lambda _: size[1]
                     )
-                    transformed += [data(img_val.getvalue(), transformed_out)]
+                    transformed += [data(img_val.getvalue(), transformed_out, box)]
         except Exception as e:
             logger.error(e.__str__())
     else:
@@ -284,6 +284,7 @@ def convert_to_tf_records(group: data, size: tuple, name) -> tf.train.Example:
     """
     object = group.object
     image = group.filename
+    interval = group.interval
     height = object["image_height"].get(0, size[0])
     width = object["image_width"].get(0, size[0])
     xmin = object["xmin"].apply(lambda x: x / width)
@@ -311,6 +312,10 @@ def convert_to_tf_records(group: data, size: tuple, name) -> tf.train.Example:
                 "image/object/bbox/y_pixel": tf_example_utils.float_list_feature(
                     object["y_pixel"].tolist()
                 ),
+                "patch/xmin": tf_example_utils.int64_feature(interval[0]),
+                "patch/ymin": tf_example_utils.int64_feature(interval[1]),
+                "patch/xmax": tf_example_utils.int64_feature(interval[2]),
+                "patch/ymax": tf_example_utils.int64_feature(interval[3]),
             }
         )
     )
@@ -324,7 +329,9 @@ def split(dataset: DataFrame, group_key: str) -> list:
     :return: a list of tuples such that each tuple consists of the key and the grouped dataframe
     """
     gb = dataset.groupby(group_key)
-    return [data(filename, gb.get_group(x)) for filename, x in zip(gb.groups.keys(), gb.groups)]
+    return [
+        data(filename, gb.get_group(x), None) for filename, x in zip(gb.groups.keys(), gb.groups)
+    ]
 
 
 @timer(logger)
@@ -349,7 +356,7 @@ def write_to_record(
 
     # TODO: remove 10 index slice
     grouped_train = split(dataset, "tiff_file")
-    filenames = [filename for filename, _ in grouped_train]
+    filenames = [filename for filename, _, _ in grouped_train]
     all_data = DataFrame()
     Path(path.join(output_dir, name)).mkdir(exist_ok=True, parents=True)
     extract_island = partial(
@@ -359,11 +366,14 @@ def write_to_record(
         size=size,
         ignore_border=ignore_border,
     )
+    total_patches = 0
     with multiprocessing.Pool(n_jobs) as pool:
-        for island_records in tqdm(
+        for island_records, n_island_patches in tqdm(
             pool.imap_unordered(extract_island, grouped_train), total=len(grouped_train)
         ):
             all_data = pd_concat([all_data, island_records])
+            total_patches += n_island_patches
+            logger.info(f"Extracted {n_island_patches} patches. Total {total_patches}")
     all_records_path = path.join(output_dir, f"{size[0]}_{name}_all_records.csv")
     logger.info(f"Writing all normalised records to {all_records_path=}")
     all_data.drop_duplicates(keep=False, inplace=True)
@@ -373,7 +383,7 @@ def write_to_record(
 def extract_island_crops(
     record: data, name: str, output_dir: str, size: tuple, ignore_border: bool
 ):
-    island, output = record
+    island, output, _ = record
     output_path = path.join(output_dir, name, f"{path.splitext(island)[0]}.tfrecord")
     writer = tf.compat.v1.python_io.TFRecordWriter(output_path)
     height = output["image_height"].iloc[0]
@@ -388,7 +398,7 @@ def extract_island_crops(
             writer.write(tf_example.SerializeToString())
     writer.flush()
     writer.close()
-    return island_records
+    return island_records, len(converted)
 
 
 def create_output_dir(output_dir: str, image_size: int) -> str:
@@ -426,31 +436,22 @@ def main(argv: list):
     write_classes(FLAGS.output_location, list(locations["layer_name"].dropna().unique()))
     locations = clean_data(locations)
     logger.info("Splitting the dataset into train, validation, testing")
-    train, validation, test = split_frame(locations)
+    train, test = split_frame(locations)
     logger.info(f"Cleaned the dataset generating tf_records")
 
     logger.info("Generating training records")
     write_to_record(train, FLAGS.output_location, "train", size=out_size)
-    logger.info("Generating validation records")
-    write_to_record(
-        validation, FLAGS.output_location, "validation", size=out_size,
-    )
+
     logger.info("Generating testing records")
-    write_to_record(test, FLAGS.output_location, "test", size=out_size)
+    write_to_record(test, FLAGS.output_location, "test", size=out_size, ignore_border=False)
 
 
 def split_frame(locations):
     file_names = locations["tiff_file"].unique()
     train, test = train_test_split(file_names, train_size=FLAGS.train_size, random_state=42)
-    train, validation = train_test_split(
-        locations[locations["tiff_file"].isin(train)]["tiff_file"].unique(),
-        train_size=1 - FLAGS.validation,
-        random_state=42,
-    )
     return (
         locations[locations["tiff_file"].isin(train)],
-        locations[locations["tiff_file"].isin(validation)],
-        locations[locations["tiff_file"].isin(validation)],
+        locations[locations["tiff_file"].isin(test)],
     )
 
 
