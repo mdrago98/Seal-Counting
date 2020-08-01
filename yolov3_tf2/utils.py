@@ -1,35 +1,34 @@
+from collections import Callable
+
 from absl import logging
 import numpy as np
 import tensorflow as tf
 import cv2
 
+
 YOLOV3_LAYER_LIST = [
-    'yolo_darknet',
-    'yolo_conv_0',
-    'yolo_output_0',
-    'yolo_conv_1',
-    'yolo_output_1',
-    'yolo_conv_2',
-    'yolo_output_2',
+    "yolo_darknet",
+    "yolo_conv_0",
+    "yolo_output_0",
+    "yolo_conv_1",
+    "yolo_output_1",
+    "yolo_conv_2",
+    "yolo_output_2",
 ]
 
 YOLOV3_TINY_LAYER_LIST = [
-    'yolo_darknet',
-    'yolo_conv_0',
-    'yolo_output_0',
-    'yolo_conv_1',
-    'yolo_output_1',
+    "yolo_darknet",
+    "yolo_conv_0",
+    "yolo_output_0",
+    "yolo_conv_1",
+    "yolo_output_1",
 ]
 
-COLORS = {
-    'red': (255, 0, 0),
-    'green': (0, 255, 0),
-    'white': (255, 255, 255)
-}
+COLORS = {"red": (255, 0, 0), "green": (0, 255, 0), "white": (255, 255, 255)}
 
 
 def load_darknet_weights(model, weights_file, tiny=False):
-    wf = open(weights_file, 'rb')
+    wf = open(weights_file, "rb")
     major, minor, revision, seen, _ = np.fromfile(wf, dtype=np.int32, count=5)
 
     if tiny:
@@ -40,15 +39,17 @@ def load_darknet_weights(model, weights_file, tiny=False):
     for layer_name in layers:
         sub_model = model.get_layer(layer_name)
         for i, layer in enumerate(sub_model.layers):
-            if not layer.name.startswith('conv2d'):
+            if not layer.name.startswith("conv2d"):
                 continue
             batch_norm = None
-            if i + 1 < len(sub_model.layers) and \
-                    sub_model.layers[i + 1].name.startswith('batch_norm'):
+            if i + 1 < len(sub_model.layers) and sub_model.layers[i + 1].name.startswith(
+                "batch_norm"
+            ):
                 batch_norm = sub_model.layers[i + 1]
 
-            logging.info("{}/{} {}".format(
-                sub_model.name, layer.name, 'bn' if batch_norm else 'bias'))
+            logging.info(
+                "{}/{} {}".format(sub_model.name, layer.name, "bn" if batch_norm else "bias")
+            )
 
             filters = layer.filters
             size = layer.kernel_size[0]
@@ -58,18 +59,15 @@ def load_darknet_weights(model, weights_file, tiny=False):
                 conv_bias = np.fromfile(wf, dtype=np.float32, count=filters)
             else:
                 # darknet [beta, gamma, mean, variance]
-                bn_weights = np.fromfile(
-                    wf, dtype=np.float32, count=4 * filters)
+                bn_weights = np.fromfile(wf, dtype=np.float32, count=4 * filters)
                 # tf [gamma, beta, mean, variance]
                 bn_weights = bn_weights.reshape((4, filters))[[1, 0, 2, 3]]
 
             # darknet shape (out_dim, in_dim, height, width)
             conv_shape = (filters, in_dim, size, size)
-            conv_weights = np.fromfile(
-                wf, dtype=np.float32, count=np.product(conv_shape))
+            conv_weights = np.fromfile(wf, dtype=np.float32, count=np.product(conv_shape))
             # tf shape (height, width, in_dim, out_dim)
-            conv_weights = conv_weights.reshape(
-                conv_shape).transpose([2, 3, 1, 0])
+            conv_weights = conv_weights.reshape(conv_shape).transpose([2, 3, 1, 0])
 
             if batch_norm is None:
                 layer.set_weights([conv_weights, conv_bias])
@@ -77,7 +75,7 @@ def load_darknet_weights(model, weights_file, tiny=False):
                 layer.set_weights([conv_weights])
                 batch_norm.set_weights(bn_weights)
 
-    assert len(wf.read()) == 0, 'failed to read all data'
+    assert len(wf.read()) == 0, "failed to read all data"
     wf.close()
 
 
@@ -93,29 +91,35 @@ def broadcast_iou(box_1, box_2):
     box_1 = tf.broadcast_to(box_1, new_shape)
     box_2 = tf.broadcast_to(box_2, new_shape)
 
-    int_w = tf.maximum(tf.minimum(box_1[..., 2], box_2[..., 2]) -
-                       tf.maximum(box_1[..., 0], box_2[..., 0]), 0)
-    int_h = tf.maximum(tf.minimum(box_1[..., 3], box_2[..., 3]) -
-                       tf.maximum(box_1[..., 1], box_2[..., 1]), 0)
+    int_w = tf.maximum(
+        tf.minimum(box_1[..., 2], box_2[..., 2]) - tf.maximum(box_1[..., 0], box_2[..., 0]), 0
+    )
+    int_h = tf.maximum(
+        tf.minimum(box_1[..., 3], box_2[..., 3]) - tf.maximum(box_1[..., 1], box_2[..., 1]), 0
+    )
     int_area = int_w * int_h
-    box_1_area = (box_1[..., 2] - box_1[..., 0]) * \
-        (box_1[..., 3] - box_1[..., 1])
-    box_2_area = (box_2[..., 2] - box_2[..., 0]) * \
-        (box_2[..., 3] - box_2[..., 1])
+    box_1_area = (box_1[..., 2] - box_1[..., 0]) * (box_1[..., 3] - box_1[..., 1])
+    box_2_area = (box_2[..., 2] - box_2[..., 0]) * (box_2[..., 3] - box_2[..., 1])
     return int_area / (box_1_area + box_2_area - int_area)
 
 
-def draw_outputs(img, outputs, class_names, color: str = 'red'):
+def draw_outputs(img, outputs, class_names, color: str = "red"):
     boxes, objectness, classes, nums = outputs
     boxes, objectness, classes, nums = boxes[0], objectness[0], classes[0], nums[0]
     wh = np.flip(img.shape[0:2])
     for i in range(nums):
         x1y1 = tuple((np.array(boxes[i][0:2]) * wh).astype(np.int32))
         x2y2 = tuple((np.array(boxes[i][2:4]) * wh).astype(np.int32))
-        img = cv2.rectangle(img, x1y1, x2y2, COLORS.get(color, 'red'), 2)
-        img = cv2.putText(img, '{} {:.4f}'.format(
-            class_names[int(classes[i])], objectness[i]),
-            x1y1, cv2.FONT_HERSHEY_COMPLEX_SMALL, 1, (0, 0, 255), 2)
+        img = cv2.rectangle(img, x1y1, x2y2, COLORS.get(color, "red"), 2)
+        img = cv2.putText(
+            img,
+            "{} {:.4f}".format(class_names[int(classes[i])], objectness[i]),
+            x1y1,
+            cv2.FONT_HERSHEY_COMPLEX_SMALL,
+            1,
+            (0, 0, 255),
+            2,
+        )
     return img
 
 
@@ -128,9 +132,9 @@ def draw_labels(x, y, class_names):
         x1y1 = tuple((np.array(boxes[i][0:2]) * wh).astype(np.int32))
         x2y2 = tuple((np.array(boxes[i][2:4]) * wh).astype(np.int32))
         img = cv2.rectangle(img, x1y1, x2y2, (255, 0, 0), 2)
-        img = cv2.putText(img, class_names[classes[i]],
-                          x1y1, cv2.FONT_HERSHEY_COMPLEX_SMALL,
-                          1, (0, 0, 255), 2)
+        img = cv2.putText(
+            img, class_names[classes[i]], x1y1, cv2.FONT_HERSHEY_COMPLEX_SMALL, 1, (0, 0, 255), 2
+        )
     return img
 
 
@@ -139,3 +143,21 @@ def freeze_all(model, frozen=True):
     if isinstance(model, tf.keras.Model):
         for l in model.layers:
             freeze_all(l, frozen)
+
+
+def get_flops(model, **kwargs):
+    session = tf.compat.v1.Session()
+    graph = tf.compat.v1.get_default_graph()
+
+    with graph.as_default():
+        with session.as_default():
+            model = model(**kwargs)
+            run_meta = tf.compat.v1.RunMetadata()
+            opts = tf.compat.v1.profiler.ProfileOptionBuilder.float_operation()
+
+            # We use the Keras session graph in the call to the profiler.
+            flops = tf.compat.v1.profiler.profile(
+                graph=graph, run_meta=run_meta, cmd="op", options=opts
+            )
+
+            return flops.total_float_ops

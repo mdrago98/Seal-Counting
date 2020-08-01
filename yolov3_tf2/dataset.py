@@ -127,9 +127,7 @@ def parse_tfrecord(tfrecord, class_table, size, max_boxes: int = 100):
     return x_train, y_train
 
 
-def load_tfrecord_dataset(
-    files: list, class_file, size=416, max_boxes: int = 100, train_val: float = 0.8
-):
+def load_tfrecord_dataset(files: list, class_file, size=416, max_boxes: int = 100):
     LINE_NUMBER = -1  # TODO: use tf.lookup.TextFileIndex.LINE_NUMBER
     class_table = tf.lookup.StaticHashTable(
         tf.lookup.TextFileInitializer(

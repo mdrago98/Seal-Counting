@@ -1,6 +1,7 @@
 import os
 import time
 from glob import glob
+from pathlib import Path
 
 from absl import app, flags, logging
 from absl.flags import FLAGS
@@ -25,8 +26,8 @@ flags.DEFINE_string(
 flags.DEFINE_boolean("tiny", False, "yolov3 or yolov3-tiny")
 flags.DEFINE_integer("size", 416, "resize images to")
 flags.DEFINE_string("image", "./data/girl.png", "path to input image")
-flags.DEFINE_string("tfrecord", "/data2/seals/tfrecords/416/train", "tfrecord instead of image")
-flags.DEFINE_string("output", "/home/md273/model_zoo/416_eager/output.jpg", "path to output image")
+flags.DEFINE_string("tfrecord", "/data2/seals/tfrecords/416/test", "tfrecord instead of image")
+flags.DEFINE_string("output", "/home/md273/model_zoo/416_eager/output", "path to output image")
 flags.DEFINE_integer("num_classes", 80, "number of classes in the model")
 
 
@@ -57,7 +58,7 @@ def main(_argv):
     #     img_raw = tf.image.decode_image(
     #         open(FLAGS.image, 'rb').read(), channels=3)
 
-    all_files = glob(os.path.join(FLAGS.tfrecord, "*.tfrecord"))[1:2]
+    all_files = glob(os.path.join(FLAGS.tfrecord, "*.tfrecord"))[4:5]
     eval_data = dataset.load_tfrecord_dataset(all_files, FLAGS.classes, FLAGS.size)
     eval_data = eval_data.map(lambda x, y: (tf.expand_dims(x, 0), y,))
     eval_data = eval_data.map(lambda x, y: (dataset.transform_images(x, FLAGS.size), y,))
@@ -70,6 +71,8 @@ def main(_argv):
         file_props["tiff_file"] == f"{os.path.splitext(os.path.basename(all_files[-1]))[0]}.tif"
     ]["image_width"].iloc[0]
     allocations_per_row = width / FLAGS.size
+    dir = Path(os.path.join(FLAGS.output, 'detections'))
+    dir.mkdir(exist_ok=True, parents=True)
     for index, (image, labels) in enumerate(eval_data):
         boxes, scores, classes, nums = yolo(image)
         img = cv2.cvtColor(image[0].numpy(), cv2.COLOR_RGB2BGR)
@@ -77,6 +80,7 @@ def main(_argv):
         # truth_score = [1 for _ in labels]
         # img = draw_outputs(img, (labels[:, :4], truth_score, labels[:, 4:5], nums), truth_score)
         imgs[-1].append(img) if len(imgs[-1]) + 1 <= allocations_per_row else imgs.append([img])
+        cv2.imwrite(os.path.join(FLAGS.output, f'{index}.png'), img)
     # stitcher = cv2.Stitcher_create()
     # show_images(imgs, len(imgs[-1]))
 

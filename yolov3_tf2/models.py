@@ -18,6 +18,7 @@ from tensorflow.keras.layers import (
 from tensorflow.keras.regularizers import l2
 from tensorflow.keras.losses import binary_crossentropy, sparse_categorical_crossentropy
 
+from .checkpointing import checkpointable
 from .layers import Darknet_Depthwise_Separable_Conv2D_BN_Leaky, compose, DarknetConv2D_BN_Leaky
 from .utils import broadcast_iou
 
@@ -85,8 +86,8 @@ def DarknetBlock(x, filters, blocks):
     return x
 
 
-def Darknet(name=None):
-    x = inputs = Input([None, None, 3])
+def Darknet(name=None, size=(None, None)):
+    x = inputs = Input([size[0], size[0], 3])
     x = DarknetConv(x, 32, 3)
     x = DarknetBlock(x, 64, 1)
     x = DarknetBlock(x, 128, 2)  # skip connection
@@ -116,11 +117,12 @@ def Darknet53_Lite(name=None, inputs=None):
     x = inputs
     x = Darknet_Depthwise_Separable_Conv2D_BN_Leaky(32, (3, 3))(x)
     x = depthwise_separable_resblock_body(x, 64, 1)
+    x = x_mid = depthwise_separable_resblock_body(x, 128, 2)
     x = depthwise_separable_resblock_body(x, 128, 2)
     x = x_36 = depthwise_separable_resblock_body(x, 256, 8)
     x = x_61 = depthwise_separable_resblock_body(x, 512, 8)
     x = depthwise_separable_resblock_body(x, 1024, 4)
-    return tf.keras.Model(inputs, (x_36, x_61, x), name=name)
+    return tf.keras.Model(inputs, (x_mid, x_36, x_61, x), name=name)
 
 
 def DarknetTiny(name=None):
@@ -246,20 +248,22 @@ def yolo_nms(outputs, anchors, masks, classes):
     return boxes, scores, classes, valid_detections
 
 
+@checkpointable
 def YoloV3(
     size=None,
     channels=3,
     anchors=yolo_anchors,
     masks=yolo_anchor_masks,
-    classes=80,
+    classes=7,
     lite=False,
     training=False,
 ):
     x = inputs = Input([size, size, channels], name="input")
 
-    x_36, x_61, x = (
-        Darknet53_Lite(name="yolo_darknet")(x) if lite else Darknet(name="yolo_darknet")(x)
-    )
+    if lite:
+        _, x_36, x_61, x = Darknet53_Lite(name="yolo_darknet")(x)
+    else:
+        x_36, x_61, x = Darknet(name="yolo_darknet")(x)
 
     x = YoloConv(512, name="yolo_conv_0")(x)
     output_0 = YoloOutput(512, len(masks[0]), classes, name="yolo_output_0")(x)
@@ -323,7 +327,7 @@ def YoloV3Tiny(
     return Model(inputs, outputs, name="yolov3_tiny")
 
 
-def YoloLoss(anchors, classes=80, ignore_thresh=0.5):
+def YoloLoss(anchors, classes=7, ignore_thresh=0.5):
     def yolo_loss(y_true, y_pred):
         # 1. transform all pred outputs
         # y_pred: (batch_size, grid, grid, anchors, (x, y, w, h, obj, ...cls))

@@ -1,11 +1,13 @@
 import os
 import pickle
+import time
+from functools import partial
 from glob import glob
 from random import sample
 
 from absl import app, flags, logging
 from absl.flags import FLAGS
-
+from tensorflow import keras
 import tensorflow as tf
 import numpy as np
 import cv2
@@ -20,6 +22,9 @@ from tensorflow.keras.callbacks import (
 from tensorflow.python.keras import Input
 
 from kmeans import kmeans
+from yolov3_tf2.callbacks import EpochTimer
+from yolov3_tf2.checkpointing import checkpointable
+from yolov3_tf2.gpu_monitor import Monitor
 from yolov3_tf2.models import (
     YoloV3,
     YoloV3Tiny,
@@ -29,8 +34,9 @@ from yolov3_tf2.models import (
     yolo_tiny_anchors,
     yolo_tiny_anchor_masks,
     Darknet53_Lite,
+    Darknet,
 )
-from yolov3_tf2.utils import freeze_all, draw_outputs
+from yolov3_tf2.utils import freeze_all, draw_outputs, get_flops
 import yolov3_tf2.dataset as dataset
 
 
@@ -39,11 +45,11 @@ flags.DEFINE_float(
     "validation", 0.2, "path to validation dataset",
 )
 flags.DEFINE_boolean("tiny", False, "yolov3 or yolov3-tiny")
-flags.DEFINE_string("weights", "./checkpoints/yolov3.tf", "path to weights file")
+flags.DEFINE_string("weights", "", "path to weights file")
 flags.DEFINE_string("classes", "data/data_files/seal.names", "path to classes file")
 flags.DEFINE_enum(
     "mode",
-    "eager_tf",
+    "fit",
     ["fit", "eager_fit", "eager_tf"],
     "fit: model.fit, " "eager_fit: model.fit(run_eagerly=True), " "eager_tf: custom GradientTape",
 )
@@ -68,13 +74,12 @@ flags.DEFINE_integer(
     "useful in transfer learning with different number of classes",
 )
 flags.DEFINE_string("out_dir", "/home/md273/model_zoo/416/", "the model output")
+flags.DEFINE_string("record_csv", "", "the all records csv frame to calculate the anchor boxes")
 
 
 def create_img_summary(records: tf.data.Dataset, file_writer, take: int = 10) -> None:
     with file_writer.as_default():
         for x, y in records.take(take):
-            if x1 == 0 and x2 == 0:
-                continue
             boxes = []
             scores = []
             classes = []
@@ -93,19 +98,66 @@ def create_img_summary(records: tf.data.Dataset, file_writer, take: int = 10) ->
             img = draw_outputs(img, (boxes, scores, classes, nums), classes)
             rgb_tensor = tf.convert_to_tensor(img, dtype=tf.float32)
             tf.summary.image("Training data", rgb_tensor, step=0)
+            file_writer.flush()
 
-
-def is_test(x, y):
-    return x % 4 == 0
-
-
-def is_train(x, y):
-    return not is_test(x, y)
-
-
-recover = lambda x, y: y
 
 os.environ["TF_CPP_MIN_VLOG_LEVEL"] = "3"
+
+
+@tf.function
+def validation(images, labels, loss: list, model, pred_loss: list, total_loss: list):
+    """
+    A tf function to calculate the validation error 
+    :param images: the validation images
+    :param labels: the labels
+    :param loss: the loss function
+    :param model: the model to validate
+    :param pred_loss: the training prediction loss
+    :param total_loss: the training loss
+    :return: 
+    """
+    outputs = model(images)
+    regularization_loss = tf.reduce_sum(model.losses)
+    pred_loss = []
+    for output, label, loss_fn in zip(outputs, labels, loss):
+        pred_loss.append(loss_fn(label, output))
+    total_loss = tf.reduce_sum(pred_loss) + regularization_loss
+    return pred_loss, total_loss
+
+
+@tf.function
+def train_batch(
+    images, labels, loss: list, model: tf.keras.Model, optimizer: tf.keras.optimizers.Optimizer
+) -> tuple:
+    """
+    A tf function to train the model on a batch.
+    :param images: the images
+    :param labels: the labels in the batch
+    :param loss: the loss functions
+    :param model: the model
+    :param optimizer: the optimization technique
+    :return: 
+    """
+    with tf.GradientTape() as tape:
+        model_part = partial(model, training=True)
+        tape.watch(model.trainable_variables)
+        # outputs = model(images, training=True, _checkpoint=True)
+        outputs = model_fn(
+            model_part, images, _checkpoint=True, _watch_vars=model.trainable_variables
+        )
+        regularization_loss = tf.reduce_sum(model.losses)
+        pred_loss = []
+        for output, label, loss_fn in zip(outputs, labels, loss):
+            pred_loss.append(loss_fn(label, output))
+        total_loss = tf.reduce_sum(pred_loss) + regularization_loss
+    grads = tape.gradient(total_loss, model.trainable_variables)
+    optimizer.apply_gradients(zip(grads, model.trainable_variables))
+    return pred_loss, total_loss
+
+
+@checkpointable
+def model_fn(model, x):
+    return model(x)
 
 
 def main(_argv):
@@ -113,6 +165,8 @@ def main(_argv):
     for physical_device in physical_devices:
         tf.config.experimental.set_memory_growth(physical_device, True)
     num_classes = 0
+    log_dir = os.path.join(FLAGS.out_dir, "logs")
+    writer = tf.summary.create_file_writer(log_dir)
     with open(FLAGS.classes, "r") as class_file:
         num_classes = len([class_name.strip() for class_name in class_file.readlines()])
     if FLAGS.tiny:
@@ -123,32 +177,40 @@ def main(_argv):
     else:
         # backbone = Darknet(inputs=Input([1024, 1024, 3], batch_size=4, name="input"))
         # print(backbone.summary())
-        model = YoloV3(FLAGS.size, training=True, classes=num_classes, lite=True)
+        model = YoloV3(FLAGS.size, training=True, classes=num_classes, lite=False)
         print(model.summary())
         # TODO plugin flag
-        all_records = read_csv("/data2/seals/tfrecords/416/train/records.csv")
-        all_records["x_pixel"] = all_records["x_pixel"].apply(lambda x: x / FLAGS.size)
-        all_records["y_pixel"] = all_records["y_pixel"].apply(lambda y: y / FLAGS.size)
+        all_records = read_csv(FLAGS.record_csv)
+        all_records["x_pixel"] = all_records["x_pixel"] / all_records["image_width"]
+        all_records["y_pixel"] = all_records["y_pixel"] / all_records["image_height"]
         logging.info("Generating anchors")
         anchors = kmeans(all_records[["x_pixel", "y_pixel"]].to_numpy(), 9)
         anchor_masks = yolo_anchor_masks
+        np.save(os.path.join(FLAGS.out_dir, "anchors.npy"), anchors)
+    with writer.as_default():
+        # store flops
+        model_flops = get_flops(Darknet, size=(FLAGS.size, FLAGS.size))
+        tf.summary.scalar("flops", tf.Variable(model_flops), step=1)
+        writer.flush()
 
-    all_files = glob(os.path.join(FLAGS.dataset, "*.tfrecord"))
-    all_files = all_files[:20]
+    all_files = glob(os.path.join(FLAGS.dataset, "*.tfrecord"))[:30]
     train_files, test_files = train_test_split(
         all_files, train_size=1 - FLAGS.validation, random_state=42,
     )
-
     train_dataset = dataset.load_tfrecord_dataset(train_files, FLAGS.classes, FLAGS.size)
     train_dataset = train_dataset.shuffle(buffer_size=512)
+
+    # create_img_summary(train_dataset, writer)
     train_dataset = train_dataset.batch(FLAGS.batch_size)
+
     train_dataset = train_dataset.map(
         lambda x, y: (
             dataset.transform_images(x, FLAGS.size),
             dataset.transform_targets(y, anchors, anchor_masks, FLAGS.size),
         )
     )
-    train_dataset = train_dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
+    # train_dataset = train_dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
+    train_dataset = train_dataset.prefetch(buffer_size=2)
 
     # val_dataset = dataset.load_fake_dataset()
     val_dataset = dataset.load_tfrecord_dataset(test_files, FLAGS.classes, FLAGS.size)
@@ -159,38 +221,9 @@ def main(_argv):
             dataset.transform_targets(y, anchors, anchor_masks, FLAGS.size),
         )
     )
-    val_dataset = val_dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
+    val_dataset = val_dataset.prefetch(buffer_size=2)
     # Configure the model for transfer learning
-    if FLAGS.transfer == "none":
-        pass  # Nothing to do
-    elif FLAGS.transfer in ["darknet", "no_output"]:
-        # Darknet transfer is a special case that works
-        # with incompatible number of classes
-
-        # reset top layers
-        if FLAGS.tiny:
-            model_pretrained = YoloV3Tiny(
-                FLAGS.size, training=True, classes=FLAGS.weights_num_classes or FLAGS.num_classes,
-            )
-        else:
-            model_pretrained = YoloV3(
-                FLAGS.size, training=True, classes=FLAGS.weights_num_classes or num_classes,
-            )
-        model_pretrained.load_weights(FLAGS.weights)
-
-        if FLAGS.transfer == "darknet":
-            model.get_layer("yolo_darknet").set_weights(
-                model_pretrained.get_layer("yolo_darknet").get_weights()
-            )
-            freeze_all(model.get_layer("yolo_darknet"))
-
-        elif FLAGS.transfer == "no_output":
-            for l in model.layers:
-                if not l.name.startswith("yolo_output"):
-                    l.set_weights(model_pretrained.get_layer(l.name).get_weights())
-                    freeze_all(l)
-
-    else:
+    if FLAGS.weights != "":
         # All other transfer require matching classes
         model.load_weights(FLAGS.weights)
         if FLAGS.transfer == "fine_tune":
@@ -201,7 +234,7 @@ def main(_argv):
             # freeze everything
             freeze_all(model)
     print(model.summary())
-    optimizer = tf.keras.optimizers.Adam(lr=FLAGS.learning_rate)
+    optimizer = keras.optimizers.Adam(lr=FLAGS.learning_rate)
     loss = [YoloLoss(anchors[mask], classes=num_classes) for mask in anchor_masks]
 
     if FLAGS.mode == "eager_tf":
@@ -212,16 +245,7 @@ def main(_argv):
 
         for epoch in range(1, FLAGS.epochs + 1):
             for batch, (images, labels) in enumerate(train_dataset):
-                with tf.GradientTape() as tape:
-                    outputs = model(images, training=True)
-                    regularization_loss = tf.reduce_sum(model.losses)
-                    pred_loss = []
-                    for output, label, loss_fn in zip(outputs, labels, loss):
-                        pred_loss.append(loss_fn(label, output))
-                    total_loss = tf.reduce_sum(pred_loss) + regularization_loss
-
-                grads = tape.gradient(total_loss, model.trainable_variables)
-                optimizer.apply_gradients(zip(grads, model.trainable_variables))
+                pred_loss, total_loss = train_batch(images, labels, loss, model, optimizer)
 
                 logging.info(
                     "{}_train_{}, {}, {}".format(
@@ -234,12 +258,9 @@ def main(_argv):
                 avg_loss.update_state(total_loss)
 
             for batch, (images, labels) in enumerate(val_dataset):
-                outputs = model(images)
-                regularization_loss = tf.reduce_sum(model.losses)
-                pred_loss = []
-                for output, label, loss_fn in zip(outputs, labels, loss):
-                    pred_loss.append(loss_fn(label, output))
-                total_loss = tf.reduce_sum(pred_loss) + regularization_loss
+                pred_loss, total_loss = validation(
+                    images, labels, loss, model, pred_loss, total_loss
+                )
 
                 logging.info(
                     "{}_val_{}, {}, {}".format(
@@ -259,11 +280,12 @@ def main(_argv):
 
             avg_loss.reset_states()
             avg_val_loss.reset_states()
-            model.save_weights("checkpoints/yolov3_train_{}.tf".format(epoch))
+            model.save_weights(os.path.join(FLAGS.out_dir, f"checkpoints/yolov3_train_{epoch}.tf"))
     else:
         model.compile(optimizer=optimizer, loss=loss, run_eagerly=(FLAGS.mode == "eager_fit"))
 
         callbacks = [
+            EpochTimer(os.path.join(FLAGS.out_dir, "memory_usage.csv")),
             ReduceLROnPlateau(verbose=1),
             EarlyStopping(patience=3, verbose=1),
             ModelCheckpoint(
@@ -271,7 +293,7 @@ def main(_argv):
                 verbose=1,
                 save_weights_only=True,
             ),
-            TensorBoard(os.path.join(FLAGS.out_dir, "logs")),
+            TensorBoard(os.path.join(FLAGS.out_dir, "logs"), profile_batch="500,510"),
         ]
 
         history = model.fit(
@@ -279,7 +301,7 @@ def main(_argv):
         )
         logging.info(history)
         pickle.dump(history, open(os.path.join(FLAGS.out_dir, "history.pickle"), "wb"))
-        model.save(os.path.join(FLAGS.out_dir, "model"))
+        # model.save(os.path.join(FLAGS.out_dir, "model"))
 
 
 if __name__ == "__main__":

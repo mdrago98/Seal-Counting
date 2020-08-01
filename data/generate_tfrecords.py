@@ -1,4 +1,5 @@
 from collections import namedtuple
+from concurrent.futures.process import ProcessPoolExecutor
 from functools import partial
 from io import BytesIO
 from itertools import permutations
@@ -6,6 +7,7 @@ from os import path
 from random import randint
 from typing import Callable
 from numpy import int64
+import numpy as np
 
 import tensorflow as tf
 from pandas import DataFrame, read_excel, concat as pd_concat
@@ -224,31 +226,33 @@ def extrapolate_crops_output(
                 # crop_box = get_seal_cropping_region(outputs, size)[
                 #     ["x_min", "y_min", "x_max", "y_max"]
                 # ]
-                intervals = extract_intervals(img.size, size)
-                intervals = list(permutations(intervals[0], r=2))
-                for i, (x, y) in enumerate(intervals):
-                    box: BBox = get_bbox(
-                        (x[0], x[1]), (y[0], y[1]),
-                    )
-                    cropped = img.crop((box.x_min, box.y_min, box.x_max, box.y_max,))
-                    extrema = cropped.convert("L").getextrema()
-                    if extrema[0] == extrema[1] and ignore_extrema:
-                        continue
-                    img_val = BytesIO()
-                    cropped.save(img_val, format="PNG")
-                    box_filter = outputs[["x_pixel", "y_pixel"]].apply(
-                        lambda x: is_in_bounding_box(box, x), axis=1
-                    )
-                    transformed_out = outputs[box_filter]
-                    transformed_out = normalise_coordinates(box, transformed_out)
-                    transformed_out = generate_object_bbox(transformed_out, size, object_bbox)
-                    transformed_out["image_width"] = transformed_out["image_width"].apply(
-                        lambda _: size[0]
-                    )
-                    transformed_out["image_height"] = transformed_out["image_height"].apply(
-                        lambda _: size[1]
-                    )
-                    transformed += [data(img_val.getvalue(), transformed_out, box)]
+                extrema = img.convert("L").getextrema()
+                if extrema[0] != extrema[1]:
+                    intervals = extract_intervals(img.size, size)
+                    intervals = list(permutations(intervals[0], r=2))
+                    for i, (x, y) in enumerate(intervals):
+                        box: BBox = get_bbox(
+                            (x[0], x[1]), (y[0], y[1]),
+                        )
+                        cropped = img.crop((box.x_min, box.y_min, box.x_max, box.y_max,))
+                        extrema = cropped.convert("L").getextrema()
+                        if extrema[0] == extrema[1] and ignore_extrema:
+                            continue
+                        img_val = BytesIO()
+                        cropped.save(img_val, format="PNG")
+                        box_filter = outputs[["x_pixel", "y_pixel"]].apply(
+                            lambda x: is_in_bounding_box(box, x), axis=1
+                        )
+                        transformed_out = outputs[box_filter]
+                        transformed_out = normalise_coordinates(box, transformed_out)
+                        transformed_out = generate_object_bbox(transformed_out, size, object_bbox)
+                        transformed_out["image_width"] = transformed_out["image_width"].apply(
+                            lambda _: size[0]
+                        )
+                        transformed_out["image_height"] = transformed_out["image_height"].apply(
+                            lambda _: size[1]
+                        )
+                        transformed += [data(img_val.getvalue(), transformed_out, box)]
         except Exception as e:
             logger.error(e.__str__())
     else:
@@ -341,7 +345,7 @@ def write_to_record(
     name: str,
     size: tuple = (416, 416),
     ignore_border: bool = True,
-    n_jobs: int = 3,
+    n_jobs: int = 2,
 ):
     """
     A function to write the dataset to tf records
@@ -356,7 +360,6 @@ def write_to_record(
 
     # TODO: remove 10 index slice
     grouped_train = split(dataset, "tiff_file")
-    filenames = [filename for filename, _, _ in grouped_train]
     all_data = DataFrame()
     Path(path.join(output_dir, name)).mkdir(exist_ok=True, parents=True)
     extract_island = partial(
@@ -367,13 +370,18 @@ def write_to_record(
         ignore_border=ignore_border,
     )
     total_patches = 0
-    with multiprocessing.Pool(n_jobs) as pool:
-        for island_records, n_island_patches in tqdm(
-            pool.imap_unordered(extract_island, grouped_train), total=len(grouped_train)
-        ):
-            all_data = pd_concat([all_data, island_records])
-            total_patches += n_island_patches
-            logger.info(f"Extracted {n_island_patches} patches. Total {total_patches}")
+    for island in tqdm(grouped_train, total=len(grouped_train)):
+        island_records, n_island_patches = extract_island(island)
+        all_data = pd_concat([all_data, island_records])
+        all_data.to_csv(path.join(output_dir, name, f"records.csv"))
+        total_patches += n_island_patches
+        logger.info(f"Extracted {n_island_patches} patches. Total {total_patches}")
+        # for island_records, n_island_patches in tqdm(
+        #     pool.imap_unordered(extract_island, grouped_train), total=len(grouped_train)
+        # ):
+        #     all_data = pd_concat([all_data, island_records])
+        #     total_patches += n_island_patches
+        #     logger.info(f"Extracted {n_island_patches} patches. Total {total_patches}")
     all_records_path = path.join(output_dir, f"{size[0]}_{name}_all_records.csv")
     logger.info(f"Writing all normalised records to {all_records_path=}")
     all_data.drop_duplicates(keep=False, inplace=True)
@@ -389,7 +397,7 @@ def extract_island_crops(
     height = output["image_height"].iloc[0]
     transformed_out = output.copy()
     transformed_out["y_pixel"] = transformed_out["y_pixel"].apply(lambda y: height - y)
-    converted = extrapolate_crops_output(island, transformed_out, size)
+    converted = extrapolate_crops_output(island, transformed_out, size, ignore_extrema=name=='train')
     island_records = DataFrame()
     if converted is not None:
         island_records = pd_concat([island_records, *[data.object for data in converted]])
@@ -433,16 +441,19 @@ def main(argv: list):
     locations = locations.merge(
         file_props[["tiff_file", "image_width", "image_height"]], how="inner"
     )
+
     write_classes(FLAGS.output_location, list(locations["layer_name"].dropna().unique()))
     locations = clean_data(locations)
     logger.info("Splitting the dataset into train, validation, testing")
     train, test = split_frame(locations)
     logger.info(f"Cleaned the dataset generating tf_records")
 
-    logger.info("Generating training records")
-    write_to_record(train, FLAGS.output_location, "train", size=out_size)
+    # logger.info("Generating training records")
+    # train = train.sort_values("image_width")
+    # write_to_record(train, FLAGS.output_location, "train", size=out_size)
 
     logger.info("Generating testing records")
+    test = test.sort_values("image_width")
     write_to_record(test, FLAGS.output_location, "test", size=out_size, ignore_border=False)
 
 

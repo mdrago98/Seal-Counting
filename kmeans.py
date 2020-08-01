@@ -84,9 +84,3 @@ def kmeans(boxes, k, dist=np.median):
 
     return clusters
 
-
-# all_records = pd.read_csv("/data2/seals/tfrecords/416/416_test_all_records.csv")
-# normalised = all_records.copy()
-# normalised["x_pixel"] = normalised["x_pixel"].apply(lambda x: x / 416)
-# normalised["y_pixel"] = normalised["y_pixel"].apply(lambda y: y / 416)
-# kmeans(normalised[["x_pixel", "y_pixel"]].to_numpy(), 9)
