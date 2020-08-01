@@ -22,7 +22,7 @@ from tensorflow.keras.callbacks import (
 from tensorflow.python.keras import Input
 
 from kmeans import kmeans
-from yolov3_tf2.callbacks import EpochTimer
+from yolov3_tf2.callbacks import GPUReport, TimeHistory
 from yolov3_tf2.checkpointing import checkpointable
 from yolov3_tf2.gpu_monitor import Monitor
 from yolov3_tf2.models import (
@@ -193,7 +193,7 @@ def main(_argv):
         tf.summary.scalar("flops", tf.Variable(model_flops), step=1)
         writer.flush()
 
-    all_files = glob(os.path.join(FLAGS.dataset, "*.tfrecord"))[:30]
+    all_files = glob(os.path.join(FLAGS.dataset, "*.tfrecord"))[:40]
     train_files, test_files = train_test_split(
         all_files, train_size=1 - FLAGS.validation, random_state=42,
     )
@@ -285,7 +285,8 @@ def main(_argv):
         model.compile(optimizer=optimizer, loss=loss, run_eagerly=(FLAGS.mode == "eager_fit"))
 
         callbacks = [
-            EpochTimer(os.path.join(FLAGS.out_dir, "memory_usage.csv")),
+            GPUReport(os.path.join(FLAGS.out_dir, "memory_usage.csv")),
+            TimeHistory(os.path.join(FLAGS.out_dir, "epoch_time.csv")),
             ReduceLROnPlateau(verbose=1),
             EarlyStopping(patience=3, verbose=1),
             ModelCheckpoint(
