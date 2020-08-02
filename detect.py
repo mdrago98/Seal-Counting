@@ -10,10 +10,10 @@ import numpy as np
 import tensorflow as tf
 from pandas import read_excel
 
-from yolov3_tf2 import dataset
-from yolov3_tf2.models import YoloV3, YoloV3Tiny
-from yolov3_tf2.dataset import transform_images, load_tfrecord_dataset
-from yolov3_tf2.utils import draw_outputs
+from yolo import dataset
+from yolo.models import YoloV3, YoloV3Tiny
+from yolo.dataset import transform_images, load_tfrecord_dataset
+from yolo.utils import draw_outputs
 from matplotlib import pyplot as plt
 
 
@@ -71,7 +71,7 @@ def main(_argv):
         file_props["tiff_file"] == f"{os.path.splitext(os.path.basename(all_files[-1]))[0]}.tif"
     ]["image_width"].iloc[0]
     allocations_per_row = width / FLAGS.size
-    dir = Path(os.path.join(FLAGS.output, 'detections'))
+    dir = Path(os.path.join(FLAGS.output, "detections"))
     dir.mkdir(exist_ok=True, parents=True)
     for index, (image, labels) in enumerate(eval_data):
         boxes, scores, classes, nums = yolo(image)
@@ -80,7 +80,7 @@ def main(_argv):
         # truth_score = [1 for _ in labels]
         # img = draw_outputs(img, (labels[:, :4], truth_score, labels[:, 4:5], nums), truth_score)
         imgs[-1].append(img) if len(imgs[-1]) + 1 <= allocations_per_row else imgs.append([img])
-        cv2.imwrite(os.path.join(FLAGS.output, f'{index}.png'), img)
+        cv2.imwrite(os.path.join(FLAGS.output, f"{index}.png"), img)
     # stitcher = cv2.Stitcher_create()
     # show_images(imgs, len(imgs[-1]))
 

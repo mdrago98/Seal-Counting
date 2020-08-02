@@ -9,30 +9,31 @@ from pandas import Series
 
 
 def int64_feature(value) -> tf.train.Feature:
-  return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
+    return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
 
 
 def int64_list_feature(value) -> tf.train.Feature:
-  return tf.train.Feature(int64_list=tf.train.Int64List(value=value))
+    return tf.train.Feature(int64_list=tf.train.Int64List(value=value))
 
 
 def bytes_feature(value) -> tf.train.Feature:
-  return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
+    return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
 
 def bytes_list_feature(value) -> tf.train.Feature:
-  return tf.train.Feature(bytes_list=tf.train.BytesList(value=value.to_list()))
+    return tf.train.Feature(bytes_list=tf.train.BytesList(value=value))
 
 
-def float_list_feature(value)-> tf.train.Feature:
-  return tf.train.Feature(float_list=tf.train.FloatList(value=value))
+def float_list_feature(value) -> tf.train.Feature:
+    return tf.train.Feature(float_list=tf.train.FloatList(value=value))
+
 
 def string_list(value: Series) -> tf.train.Feature:
-  return bytes_list_feature(value.str.encode('UTF-8'))
+    return bytes_list_feature(value.str.encode("UTF-8"))
 
 
 def read_examples_list(path):
-  """Read list of training or validation examples.
+    """Read list of training or validation examples.
 
   The file is assumed to contain a single example per line where the first
   token in the line is an identifier that allows us to find the image and
@@ -48,13 +49,13 @@ def read_examples_list(path):
   Returns:
     list of example identifiers (strings).
   """
-  with tf.gfile.GFile(path) as fid:
-    lines = fid.readlines()
-  return [line.strip().split(' ')[0] for line in lines]
+    with tf.gfile.GFile(path) as fid:
+        lines = fid.readlines()
+    return [line.strip().split(" ")[0] for line in lines]
 
 
 def recursive_parse_xml_to_dict(xml):
-  """Recursively parses XML contents to python dict.
+    """Recursively parses XML contents to python dict.
 
   We assume that `object` tags are the only ones that can appear
   multiple times at the same level of a tree.
@@ -65,15 +66,15 @@ def recursive_parse_xml_to_dict(xml):
   Returns:
     Python dictionary holding XML contents.
   """
-  if not xml:
-    return {xml.tag: xml.text}
-  result = {}
-  for child in xml:
-    child_result = recursive_parse_xml_to_dict(child)
-    if child.tag != 'object':
-      result[child.tag] = child_result[child.tag]
-    else:
-      if child.tag not in result:
-        result[child.tag] = []
-      result[child.tag].append(child_result[child.tag])
-  return {xml.tag: result}
+    if not xml:
+        return {xml.tag: xml.text}
+    result = {}
+    for child in xml:
+        child_result = recursive_parse_xml_to_dict(child)
+        if child.tag != "object":
+            result[child.tag] = child_result[child.tag]
+        else:
+            if child.tag not in result:
+                result[child.tag] = []
+            result[child.tag].append(child_result[child.tag])
+    return {xml.tag: result}

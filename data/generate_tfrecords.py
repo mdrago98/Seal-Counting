@@ -10,12 +10,12 @@ from numpy import int64
 import numpy as np
 
 import tensorflow as tf
-from pandas import DataFrame, read_excel, concat as pd_concat
+from pandas import DataFrame, read_excel, concat as pd_concat, read_csv, isna
 from PIL import Image
 from pathlib import Path
 from absl import flags, app
 from tqdm import tqdm
-from os import getcwd
+from os import getcwd, environ
 
 from helpers.utils import get_logger
 
@@ -35,6 +35,8 @@ from sklearn.model_selection import train_test_split
 import multiprocessing
 
 from helpers.utils import timer
+
+environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 Image.MAX_IMAGE_PIXELS = 99999999999999999999
 
@@ -204,7 +206,16 @@ def generate_crop_locations(
     return cropping_regions, size_increments
 
 
-def extrapolate_crops_output(
+def slicer(train: bool, outputs, image_size, size):
+    if train:
+        crops = get_seal_cropping_region(outputs, size)[["x_min", "y_min", "x_max", "y_max"]]
+        return [((crop[0], crop[2]), (crop[1], crop[3])) for crop in crops.to_records(index=False)]
+    else:
+        intervals = extract_intervals(image_size, size)
+        return list(permutations(intervals[0], r=2))
+
+
+def extrapolate_patches(
     image: str, outputs: DataFrame, size: tuple, object_bbox: tuple = (60, 60), ignore_extrema=True
 ) -> list:
     """
@@ -223,13 +234,10 @@ def extrapolate_crops_output(
         try:
             with Image.open(img_path) as img:
                 # TODO refactor code to crop image using PIL + refactor extrapolate image to
-                # crop_box = get_seal_cropping_region(outputs, size)[
-                #     ["x_min", "y_min", "x_max", "y_max"]
-                # ]
+
                 extrema = img.convert("L").getextrema()
                 if extrema[0] != extrema[1]:
-                    intervals = extract_intervals(img.size, size)
-                    intervals = list(permutations(intervals[0], r=2))
+                    intervals = slicer(ignore_extrema, outputs, img.size, size)
                     for i, (x, y) in enumerate(intervals):
                         box: BBox = get_bbox(
                             (x[0], x[1]), (y[0], y[1]),
@@ -295,6 +303,9 @@ def convert_to_tf_records(group: data, size: tuple, name) -> tf.train.Example:
     xmax = object["xmax"].apply(lambda x: x / width)
     ymin = object["ymin"].apply(lambda y: y / height)
     ymax = object["ymax"].apply(lambda y: y / height)
+    text = (
+        object["layer_name"].str.encode("UTF-8").to_list() if object["layer_name"].size != 0 else []
+    )
     return tf.train.Example(
         features=tf.train.Features(
             feature={
@@ -309,7 +320,7 @@ def convert_to_tf_records(group: data, size: tuple, name) -> tf.train.Example:
                 "image/object/bbox/xmax": tf_example_utils.float_list_feature(xmax.tolist()),
                 "image/object/bbox/ymin": tf_example_utils.float_list_feature(ymin.tolist()),
                 "image/object/bbox/ymax": tf_example_utils.float_list_feature(ymax.tolist()),
-                "image/object/class/text": tf_example_utils.string_list(object["layer_name"]),
+                "image/object/class/text": tf_example_utils.bytes_list_feature(text),
                 "image/object/bbox/x_pixel": tf_example_utils.float_list_feature(
                     object["x_pixel"].tolist()
                 ),
@@ -357,8 +368,6 @@ def write_to_record(
     :param size: the image crop size
     :return: None
     """
-
-    # TODO: remove 10 index slice
     grouped_train = split(dataset, "tiff_file")
     all_data = DataFrame()
     Path(path.join(output_dir, name)).mkdir(exist_ok=True, parents=True)
@@ -370,12 +379,14 @@ def write_to_record(
         ignore_border=ignore_border,
     )
     total_patches = 0
-    for island in tqdm(grouped_train, total=len(grouped_train)):
+    for island_number, island in tqdm(enumerate(grouped_train), total=len(grouped_train)):
         island_records, n_island_patches = extract_island(island)
         all_data = pd_concat([all_data, island_records])
         all_data.to_csv(path.join(output_dir, name, f"records.csv"))
         total_patches += n_island_patches
-        logger.info(f"Extracted {n_island_patches} patches. Total {total_patches}")
+        logger.info(
+            f"Extracted {n_island_patches} patches. Total patches for n={island_number} {total_patches}"
+        )
         # for island_records, n_island_patches in tqdm(
         #     pool.imap_unordered(extract_island, grouped_train), total=len(grouped_train)
         # ):
@@ -397,7 +408,7 @@ def extract_island_crops(
     height = output["image_height"].iloc[0]
     transformed_out = output.copy()
     transformed_out["y_pixel"] = transformed_out["y_pixel"].apply(lambda y: height - y)
-    converted = extrapolate_crops_output(island, transformed_out, size, ignore_extrema=name=='train')
+    converted = extrapolate_patches(island, transformed_out, size, ignore_extrema=name == "train")
     island_records = DataFrame()
     if converted is not None:
         island_records = pd_concat([island_records, *[data.object for data in converted]])
@@ -436,25 +447,29 @@ def main(argv: list):
     global logger
     logger = get_logger(FLAGS.output_location)
     out_size = (FLAGS.image_size, FLAGS.image_size)
-    locations = read_excel(FLAGS.pixel_coord, sheet_name="PixelCoordinates",)
+    # locations = read_excel(FLAGS.pixel_coord, sheet_name="PixelCoordinates",)
     file_props = read_excel(FLAGS.pixel_coord, sheet_name="FileOverview",).dropna()
-    locations = locations.merge(
-        file_props[["tiff_file", "image_width", "image_height"]], how="inner"
-    )
-
-    write_classes(FLAGS.output_location, list(locations["layer_name"].dropna().unique()))
-    locations = clean_data(locations)
+    # locations = locations.merge(
+    #     file_props[["tiff_file", "image_width", "image_height"]], how="inner"
+    # )
+    #
+    # write_classes(FLAGS.output_location, list(locations["layer_name"].dropna().unique()))
+    # locations = clean_data(locations)
+    locations = read_csv("/data2/seals/tfrecords/all.csv")
     logger.info("Splitting the dataset into train, validation, testing")
     train, test = split_frame(locations)
     logger.info(f"Cleaned the dataset generating tf_records")
 
+    logger.info("Generating training records")
+    train = train.sort_values("image_width")
+    write_to_record(train, FLAGS.output_location, "train", size=out_size)
     # logger.info("Generating training records")
-    # train = train.sort_values("image_width")
-    # write_to_record(train, FLAGS.output_location, "train", size=out_size)
-
-    logger.info("Generating testing records")
-    test = test.sort_values("image_width")
-    write_to_record(test, FLAGS.output_location, "test", size=out_size, ignore_border=False)
+    # all_files = read_excel(FLAGS.pixel_coord, sheet_name="PixelCoordinates",)[
+    #     ["tiff_file", "layer_name", "x_pixel", "y_pixel"]
+    # ].merge(file_props[["tiff_file", "image_width", "image_height"]], how="inner")
+    # all_files = all_files[isna(all_files).any(axis=1)]
+    # all_files = all_files.fillna(-100)
+    # write_to_record(all_files, FLAGS.output_location, "background", size=out_size)
 
 
 def split_frame(locations):

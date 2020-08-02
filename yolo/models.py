@@ -18,8 +18,6 @@ from tensorflow.keras.layers import (
 from tensorflow.keras.regularizers import l2
 from tensorflow.keras.losses import binary_crossentropy, sparse_categorical_crossentropy
 
-from .checkpointing import checkpointable
-from .layers import Darknet_Depthwise_Separable_Conv2D_BN_Leaky, compose, DarknetConv2D_BN_Leaky
 from .utils import broadcast_iou
 
 flags.DEFINE_integer("yolo_max_boxes", 100, "maximum number of boxes per image")
@@ -95,34 +93,6 @@ def Darknet(name=None, size=(None, None)):
     x = x_61 = DarknetBlock(x, 512, 8)
     x = DarknetBlock(x, 1024, 4)
     return tf.keras.Model(inputs, (x_36, x_61, x), name=name)
-
-
-def depthwise_separable_resblock_body(x, num_filters, num_blocks):
-    """A series of resblocks starting with a downsampling Convolution2D"""
-    # Darknet uses left and top padding instead of 'same' mode
-    x = ZeroPadding2D(((1, 0), (1, 0)))(x)
-    x = Darknet_Depthwise_Separable_Conv2D_BN_Leaky(num_filters, (3, 3), strides=(2, 2))(x)
-    for i in range(num_blocks):
-        y = compose(
-            DarknetConv2D_BN_Leaky(num_filters // 2, (1, 1)),
-            Darknet_Depthwise_Separable_Conv2D_BN_Leaky(num_filters, (3, 3)),
-        )(x)
-        x = Add()([x, y])
-    return x
-
-
-def Darknet53_Lite(name=None, inputs=None):
-    if inputs is None:
-        inputs = Input([None, None, 3])
-    x = inputs
-    x = Darknet_Depthwise_Separable_Conv2D_BN_Leaky(32, (3, 3))(x)
-    x = depthwise_separable_resblock_body(x, 64, 1)
-    x = x_mid = depthwise_separable_resblock_body(x, 128, 2)
-    x = depthwise_separable_resblock_body(x, 128, 2)
-    x = x_36 = depthwise_separable_resblock_body(x, 256, 8)
-    x = x_61 = depthwise_separable_resblock_body(x, 512, 8)
-    x = depthwise_separable_resblock_body(x, 1024, 4)
-    return tf.keras.Model(inputs, (x_mid, x_36, x_61, x), name=name)
 
 
 def DarknetTiny(name=None):
@@ -248,7 +218,6 @@ def yolo_nms(outputs, anchors, masks, classes):
     return boxes, scores, classes, valid_detections
 
 
-@checkpointable
 def YoloV3(
     size=None,
     channels=3,
@@ -260,10 +229,7 @@ def YoloV3(
 ):
     x = inputs = Input([size, size, channels], name="input")
 
-    if lite:
-        _, x_36, x_61, x = Darknet53_Lite(name="yolo_darknet")(x)
-    else:
-        x_36, x_61, x = Darknet(name="yolo_darknet")(x)
+    x_36, x_61, x = Darknet(name="yolo_darknet")(x)
 
     x = YoloConv(512, name="yolo_conv_0")(x)
     output_0 = YoloOutput(512, len(masks[0]), classes, name="yolo_output_0")(x)

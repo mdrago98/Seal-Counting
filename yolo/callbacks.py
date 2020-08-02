@@ -6,7 +6,7 @@ from tensorflow import keras
 from matplotlib import pyplot as plt
 from pandas import read_csv, DataFrame
 
-from yolov3_tf2.gpu_monitor import Monitor
+from yolo.gpu_monitor import Monitor
 
 
 class GPUReport(keras.callbacks.Callback):
@@ -35,6 +35,10 @@ class GPUReport(keras.callbacks.Callback):
 
 
 class TimeHistory(keras.callbacks.Callback):
+    """
+    Monitors the time it takes to process an epoch
+    """
+
     def __init__(self, output):
         super().__init__()
         self.times = []

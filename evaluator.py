@@ -1,18 +1,23 @@
 import os
 from glob import glob
+from io import BytesIO
+from itertools import permutations
 from pathlib import Path
 
 # from mean_average_precision import MeanAveragePrecision
 from random import sample
 
 import cv2
+from PIL import Image
 from absl import app, flags, logging
 from mean_average_precision.detection_map import DetectionMAP
-from pandas import DataFrame, concat
+from pandas import DataFrame, concat, read_excel, read_csv
 from tqdm import tqdm
 
-from yolov3_tf2 import dataset
-from yolov3_tf2.models import YoloV3
+from data.generate_tfrecords import extrapolate_patches, clean_data, split_frame, split
+from data.image_handler import extract_intervals, get_bbox
+from yolo import dataset
+from yolo.models import YoloV3
 import tensorflow as tf
 import pickle
 from time import time
@@ -27,17 +32,19 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("classes", "./data/data_files/seal.names", "path to classes file")
 flags.DEFINE_string(
     "weights",
-    "/home/md273/model_zoo/416_eager/checkpoints/yolov3_train_7.tf",
+    "/home/md273/model_zoo/416_Prefinal/checkpoints/yolov3_train_8.tf",
     "path to weights file",
 )
 flags.DEFINE_boolean("tiny", False, "yolov3 or yolov3-tiny")
 flags.DEFINE_integer("size", 416, "resize images to")
 flags.DEFINE_string(
-    "tfrecord", "/data2/seals/tfrecords/416/train", "tfrecord instead of image",
+    "tfrecord", "/data2/seals/tfrecords/416/test", "tfrecord instead of image",
 )
 flags.DEFINE_string("output", "/home/md273/model_zoo/416_eager/eval", "path to output image")
 # flags.DEFINE_integer("num_classes", 80, "number of classes in the model")
-
+flags.DEFINE_string(
+    "anchor_path", "/home/md273/model_zoo/416_Prefinal/anchors.npy", "path to the anchor file",
+)
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 
@@ -83,16 +90,23 @@ def omit_zero_vals(x: tf.Tensor) -> tf.Tensor:
     return tf.boolean_mask(x, bool_mask)
 
 
-def calculate_metrics(eval_data, model, mAP) -> tuple:
+def zero_filter(x):
+    return tf.boolean_mask(x, tf.cast(x, dtype=tf.bool))
+
+
+def calculate_metrics(eval_data, model) -> tuple:
+    mAP = DetectionMAP(1)
     false_negative = 0
     inference_times = []
     detections = DataFrame()
 
     for index, (image, labels) in enumerate(eval_data):
+
         t1 = time()
         boxes, scores, classes, nums = model(image)
         t2 = time()
         inference_times += [t2 - t1]
+        labels = zero_filter(labels)
         # get first 4 cols from tensor and compute iou
         pred, pred_cls, pred_conf, gt_bb, gt_cls = [], [], [], [], []
         for i, truth in enumerate(labels[:, :5]):
@@ -102,7 +116,7 @@ def calculate_metrics(eval_data, model, mAP) -> tuple:
                 or tf.reduce_sum(scores[0][i]) != 0
             ):
                 pred += [boxes[0][i].numpy()]
-                pred_cls += [classes[0][i].numpy()]
+                pred_cls += [1]
                 pred_conf += [scores[0][i].numpy()]
                 gt_bb += [truth[:4].numpy()]
                 gt_cls += [truth[4:5].numpy()[0]]
@@ -121,15 +135,16 @@ def calculate_metrics(eval_data, model, mAP) -> tuple:
                 elif tf.reduce_sum(truth).numpy() != 0:
                     false_negative += 1
                 detections = detections.append(DataFrame(detection))
-        mAP.evaluate(
-            *[
-                np.array(pred),
-                np.array(pred_cls),
-                np.array(pred_conf),
-                np.array(gt_bb),
-                np.array(gt_cls),
-            ]
-        )
+        if len(pred) != 0:
+            mAP.evaluate(
+                *[
+                    np.array(pred),
+                    np.array(pred_cls),
+                    np.array(pred_conf),
+                    np.array(gt_bb),
+                    np.array(gt_cls),
+                ]
+            )
 
     detections = detections.sort_values("confidence", ascending=False)
     detections["Acc TP"] = detections["TP"].cumsum()
@@ -140,39 +155,60 @@ def calculate_metrics(eval_data, model, mAP) -> tuple:
     return detections, mAP
 
 
+def predict_on_patches(image_name: str, interval_size: tuple, seal_locations: DataFrame, model):
+    inference_times = []
+    patches = extrapolate_patches(image_name, seal_locations, interval_size, ignore_extrema=False)
+    patches = [patch for patch in patches if patch.object.size != 0]
+    for image_bytes, _, patch_region in patches:
+        image = tf.image.decode_png(image_bytes)
+        image = tf.expand_dims(image, 0)
+        image = dataset.transform_images(image, FLAGS.size)
+        t1 = time()
+        boxes, scores, classes, nums = model(image)
+        t2 = time()
+        inference_times += [t2 - t1]
+    pass
+
+
 def main(_argv):
     # TODO: save anchors during training and load
     class_names = [c.strip() for c in open(FLAGS.classes).readlines()]
-    # yolo = YoloV3(classes=len(class_names))
-    yolo = YoloV3(classes=80)
-    yolo.load_weights(FLAGS.weights).expect_partial()
+    anchors = np.load(FLAGS.anchor_path)
+    model = YoloV3(classes=len(class_names), anchors=anchors)
+    model.load_weights(FLAGS.weights).expect_partial()
     logging.info("Weights loaded")
+    locations = read_csv("/data2/seals/tfrecords/all.csv")
+    train, test = split_frame(locations)
+    logging.info("Locations loaded")
+    grouped = split(train, "tiff_file")
+    for filename, locations, _ in grouped:
+        predict_on_patches(filename, (FLAGS.size, FLAGS.size), locations, model)
+    # predict_on_patches(grouped_train)
 
-    logging.info("Classes loaded")
-    all_files = sample(glob(os.path.join(FLAGS.tfrecord, "*.tfrecord")), 10)
-    mAP = DetectionMAP(len(class_names))
-    all_results = DataFrame()
-    fig_dir = Path(os.path.join(os.path.basename(FLAGS.output)), "figures")
-    fig_dir.mkdir(exist_ok=True, parents=True)
-    csv_out = Path(os.path.join(os.path.basename(FLAGS.output)), "csv")
-    csv_out.mkdir(exist_ok=True, parents=True)
-    for file in tqdm(all_files):
-        eval_data = dataset.load_tfrecord_dataset([file], FLAGS.classes, FLAGS.size)
-        eval_data = eval_data.map(lambda x, y: (tf.expand_dims(x, 0), y,))
-        eval_data = eval_data.map(lambda x, y: (dataset.transform_images(x, FLAGS.size), y,))
+    # all_files = sample(glob(os.path.join(FLAGS.tfrecord, "*.tfrecord")), 1)
 
-        results, mAP = calculate_metrics(eval_data, yolo, mAP)
-        results.to_csv(os.path.join(FLAGS.output, f"{os.path.basename(file)}.csv"))
-        all_results = concat([all_results, results])
-        mAP.plot()
-        plt.show()
-        ax = sns.lineplot(x="Recall", y="Precision", data=results)
-        fig = ax.get_figure()
-        fig.savefig(os.path.join(fig_dir, f"pr_{os.path.basename(file)}.png"))
-    all_results.dropna().to_csv("all_results")
-    ax = sns.lineplot(x="Recall", y="Precision", data=all_results)
-    fig = ax.get_figure()
-    fig.savefig(os.path.join(fig_dir, f"pr_{all}.png"))
+    # all_results = DataFrame()
+    # fig_dir = Path(os.path.join(os.path.basename(FLAGS.output)), "figures")
+    # fig_dir.mkdir(exist_ok=True, parents=True)
+    # csv_out = Path(os.path.join(os.path.basename(FLAGS.output)), "csv")
+    # csv_out.mkdir(exist_ok=True, parents=True)
+    # for file in tqdm(all_files):
+    #     eval_data = dataset.load_tfrecord_dataset([file], FLAGS.classes, FLAGS.size)
+    #     eval_data = eval_data.map(lambda x, y: (tf.expand_dims(x, 0), y,))
+    #     eval_data = eval_data.map(lambda x, y: (dataset.transform_images(x, FLAGS.size), y,))
+    #
+    #     results, mAP = calculate_metrics(eval_data, yolo)
+    #     # results.to_csv(os.path.join(FLAGS.output, f"{os.path.basename(file)}.csv"))
+    #     all_results = concat([all_results, results])
+    #     mAP.plot()
+    #     plt.show()
+    #     # ax = sns.lineplot(x="Recall", y="Precision", data=results)
+    #     # fig = ax.get_figure()
+    #     # fig.savefig(os.path.join(fig_dir, f"pr_{os.path.basename(file)}.png"))
+    # all_results.dropna().to_csv("all_results")
+    # ax = sns.lineplot(x="Recall", y="Precision", data=all_results)
+    # fig = ax.get_figure()
+    # fig.savefig(os.path.join(fig_dir, f"pr_{all}.png"))
 
 
 if __name__ == "__main__":

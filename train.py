@@ -21,23 +21,23 @@ from tensorflow.keras.callbacks import (
 )
 from tensorflow.python.keras import Input
 
-from kmeans import kmeans
-from yolov3_tf2.callbacks import GPUReport, TimeHistory
-from yolov3_tf2.checkpointing import checkpointable
-from yolov3_tf2.gpu_monitor import Monitor
-from yolov3_tf2.models import (
+# from kmeans import kmeans
+from kmeans import generate_anchors
+from yolo.callbacks import GPUReport, TimeHistory
+from yolo.checkpointing import checkpointable
+from yolo.gpu_monitor import Monitor
+from yolo.models import (
     YoloV3,
     YoloV3Tiny,
     YoloLoss,
-    yolo_anchors,
     yolo_anchor_masks,
     yolo_tiny_anchors,
     yolo_tiny_anchor_masks,
-    Darknet53_Lite,
     Darknet,
 )
-from yolov3_tf2.utils import freeze_all, draw_outputs, get_flops
-import yolov3_tf2.dataset as dataset
+from yolo.utils import freeze_all, draw_outputs, get_flops
+import yolo.dataset as dataset
+from matplotlib import pyplot as plt
 
 
 flags.DEFINE_string("dataset", "/data2/seals/tfrecords/1024/train", "path to dataset")
@@ -181,10 +181,9 @@ def main(_argv):
         print(model.summary())
         # TODO plugin flag
         all_records = read_csv(FLAGS.record_csv)
-        all_records["x_pixel"] = all_records["x_pixel"] / all_records["image_width"]
-        all_records["y_pixel"] = all_records["y_pixel"] / all_records["image_height"]
         logging.info("Generating anchors")
-        anchors = kmeans(all_records[["x_pixel", "y_pixel"]].to_numpy(), 9)
+
+        anchors, _, _ = generate_anchors(all_records, 9)
         anchor_masks = yolo_anchor_masks
         np.save(os.path.join(FLAGS.out_dir, "anchors.npy"), anchors)
     with writer.as_default():
@@ -193,7 +192,7 @@ def main(_argv):
         tf.summary.scalar("flops", tf.Variable(model_flops), step=1)
         writer.flush()
 
-    all_files = glob(os.path.join(FLAGS.dataset, "*.tfrecord"))[:40]
+    all_files = glob(os.path.join(FLAGS.dataset, "*.tfrecord"))
     train_files, test_files = train_test_split(
         all_files, train_size=1 - FLAGS.validation, random_state=42,
     )
@@ -209,6 +208,7 @@ def main(_argv):
             dataset.transform_targets(y, anchors, anchor_masks, FLAGS.size),
         )
     )
+
     # train_dataset = train_dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
     train_dataset = train_dataset.prefetch(buffer_size=2)
 
