@@ -24,23 +24,23 @@ flags.DEFINE_integer("yolo_max_boxes", 100, "maximum number of boxes per image")
 flags.DEFINE_float("yolo_iou_threshold", 0.5, "iou threshold")
 flags.DEFINE_float("yolo_score_threshold", 0.5, "score threshold")
 
-yolo_anchors = (
-    np.array(
-        [
-            (10, 13),
-            (16, 30),
-            (33, 23),
-            (30, 61),
-            (62, 45),
-            (59, 119),
-            (116, 90),
-            (156, 198),
-            (373, 326),
-        ],
-        np.float32,
-    )
-    / 416
-)
+# yolo_anchors = (
+#     np.array(
+#         [
+#             (10, 13),
+#             (16, 30),
+#             (33, 23),
+#             (30, 61),
+#             (62, 45),
+#             (59, 119),
+#             (116, 90),
+#             (156, 198),
+#             (373, 326),
+#         ],
+#         np.float32,
+#     )
+#     / 416
+# )
 yolo_anchor_masks = np.array([[6, 7, 8], [3, 4, 5], [0, 1, 2]])
 
 yolo_tiny_anchors = (
@@ -95,22 +95,15 @@ def Darknet(name=None, size=(None, None)):
     return tf.keras.Model(inputs, (x_36, x_61, x), name=name)
 
 
-def DarknetTiny(name=None):
-    x = inputs = Input([None, None, 3])
-    x = DarknetConv(x, 16, 3)
-    x = MaxPool2D(2, 2, "same")(x)
-    x = DarknetConv(x, 32, 3)
-    x = MaxPool2D(2, 2, "same")(x)
-    x = DarknetConv(x, 64, 3)
-    x = MaxPool2D(2, 2, "same")(x)
-    x = DarknetConv(x, 128, 3)
-    x = MaxPool2D(2, 2, "same")(x)
-    x = x_8 = DarknetConv(x, 256, 3)  # skip connection
-    x = MaxPool2D(2, 2, "same")(x)
-    x = DarknetConv(x, 512, 3)
-    x = MaxPool2D(2, 1, "same")(x)
-    x = DarknetConv(x, 1024, 3)
-    return tf.keras.Model(inputs, (x_8, x), name=name)
+def Darknet_deep(name=None, size=(None, None)):
+    x = inputs = Input([size[0], size[0], 3])
+    x = DarknetConv(x, 32 * 2, 3)
+    x = DarknetBlock(x, 64 * 2, 1)
+    x = DarknetBlock(x, 128 * 2, 2)  # skip connection
+    x = x_36 = DarknetBlock(x, 256 * 2, 8)  # skip connection
+    x = x_61 = DarknetBlock(x, 512 * 2, 8)
+    x = DarknetBlock(x, 1024 * 2, 4)
+    return tf.keras.Model(inputs, (x_36, x_61, x), name=name)
 
 
 def YoloConv(filters, name=None):
@@ -221,15 +214,16 @@ def yolo_nms(outputs, anchors, masks, classes):
 def YoloV3(
     size=None,
     channels=3,
-    anchors=yolo_anchors,
+    anchors=None,
     masks=yolo_anchor_masks,
     classes=7,
     lite=False,
     training=False,
+    backbone=Darknet,
 ):
     x = inputs = Input([size, size, channels], name="input")
 
-    x_36, x_61, x = Darknet(name="yolo_darknet")(x)
+    x_36, x_61, x = backbone(name="yolo_darknet")(x)
 
     x = YoloConv(512, name="yolo_conv_0")(x)
     output_0 = YoloOutput(512, len(masks[0]), classes, name="yolo_output_0")(x)

@@ -297,12 +297,7 @@ def convert_to_tf_records(group: data, size: tuple, name) -> tf.train.Example:
     object = group.object
     image = group.filename
     interval = group.interval
-    height = object["image_height"].get(0, size[0])
-    width = object["image_width"].get(0, size[0])
-    xmin = object["xmin"].apply(lambda x: x / width)
-    xmax = object["xmax"].apply(lambda x: x / width)
-    ymin = object["ymin"].apply(lambda y: y / height)
-    ymax = object["ymax"].apply(lambda y: y / height)
+    height, width, xmax, xmin, ymax, ymin = normalize_by_size(object, size)
     text = (
         object["layer_name"].str.encode("UTF-8").to_list() if object["layer_name"].size != 0 else []
     )
@@ -334,6 +329,16 @@ def convert_to_tf_records(group: data, size: tuple, name) -> tf.train.Example:
             }
         )
     )
+
+
+def normalize_by_size(object, size):
+    height = object["image_height"].get(0, size[0])
+    width = object["image_width"].get(0, size[0])
+    xmin = object["xmin"].apply(lambda x: x / width)
+    xmax = object["xmax"].apply(lambda x: x / width)
+    ymin = object["ymin"].apply(lambda y: y / height)
+    ymax = object["ymax"].apply(lambda y: y / height)
+    return height, width, xmax, xmin, ymax, ymin
 
 
 def split(dataset: DataFrame, group_key: str) -> list:
@@ -463,13 +468,13 @@ def main(argv: list):
     logger.info("Generating training records")
     train = train.sort_values("image_width")
     write_to_record(train, FLAGS.output_location, "train", size=out_size)
-    # logger.info("Generating training records")
-    # all_files = read_excel(FLAGS.pixel_coord, sheet_name="PixelCoordinates",)[
-    #     ["tiff_file", "layer_name", "x_pixel", "y_pixel"]
-    # ].merge(file_props[["tiff_file", "image_width", "image_height"]], how="inner")
-    # all_files = all_files[isna(all_files).any(axis=1)]
-    # all_files = all_files.fillna(-100)
-    # write_to_record(all_files, FLAGS.output_location, "background", size=out_size)
+    logger.info("Generating training records")
+    all_files = read_excel(FLAGS.pixel_coord, sheet_name="PixelCoordinates",)[
+        ["tiff_file", "layer_name", "x_pixel", "y_pixel"]
+    ].merge(file_props[["tiff_file", "image_width", "image_height"]], how="inner")
+    all_files = all_files[isna(all_files).any(axis=1)]
+    all_files = all_files.fillna(-100)
+    write_to_record(all_files, FLAGS.output_location, "background", size=out_size)
 
 
 def split_frame(locations):

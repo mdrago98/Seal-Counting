@@ -105,12 +105,14 @@ def interpolate_nans(x):
 
 
 def generate_anchors(locations, n_anchors=9):
-    locations["width"] = locations["x_pixel"].apply(lambda _: sample([50, 60, 70, 80, 90], 1)[0])
-    locations["height"] = locations["x_pixel"].apply(lambda _: 60)
+    locations["width"] = locations["x_pixel"].apply(lambda _: 70)
+    locations["height"] = locations["y_pixel"].apply(lambda _: 70)
     locations["width"] = locations["width"] / locations["image_width"]
     locations["height"] = locations["height"] / locations["image_height"]
     w = locations["width"].to_numpy()
     h = locations["height"].to_numpy()
+    w.sort()
+    h.sort()
     x = [w, h]
     x = np.asarray(x).T
     kmeans = KMeans(n_clusters=n_anchors)
@@ -125,8 +127,8 @@ def generate_anchors(locations, n_anchors=9):
 
 
 if __name__ == "__main__":
-    locations = read_csv("/data2/seals/tfrecords/all.csv")
-    # locations = read_csv("/data2/seals/tfrecords/416/train/records.csv")
+    # locations = read_csv("/data2/seals/tfrecords/all.csv")
+    locations = read_csv("/data2/seals/tfrecords/416/train/records.csv")
     yolo_anchor_average, x, y = generate_anchors(locations, 9)
     plt.scatter(x[:, 0], x[:, 1], c=y, s=2, cmap="viridis")
     plt.scatter(yolo_anchor_average[:, 0], yolo_anchor_average[:, 1], c="red", s=50)

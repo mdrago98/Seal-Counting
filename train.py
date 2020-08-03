@@ -186,11 +186,11 @@ def main(_argv):
         anchors, _, _ = generate_anchors(all_records, 9)
         anchor_masks = yolo_anchor_masks
         np.save(os.path.join(FLAGS.out_dir, "anchors.npy"), anchors)
-    with writer.as_default():
-        # store flops
-        model_flops = get_flops(Darknet, size=(FLAGS.size, FLAGS.size))
-        tf.summary.scalar("flops", tf.Variable(model_flops), step=1)
-        writer.flush()
+    # with writer.as_default():
+    #     # store flops
+    #     model_flops = get_flops(Darknet, size=(FLAGS.size, FLAGS.size))
+    #     tf.summary.scalar("flops", tf.Variable(model_flops), step=1)
+    #     writer.flush()
 
     all_files = glob(os.path.join(FLAGS.dataset, "*.tfrecord"))
     train_files, test_files = train_test_split(
