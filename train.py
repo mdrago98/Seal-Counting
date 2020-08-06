@@ -27,13 +27,13 @@ from yolo.callbacks import GPUReport, TimeHistory
 from yolo.checkpointing import checkpointable
 from yolo.gpu_monitor import Monitor
 from yolo.models import (
-    YoloV3,
-    YoloV3Tiny,
-    YoloLoss,
+    yolo_3,
+    yolo_loss,
     yolo_anchor_masks,
     yolo_tiny_anchors,
     yolo_tiny_anchor_masks,
-    Darknet,
+    darknet_backbone,
+    Darknet_deep,
 )
 from yolo.utils import freeze_all, draw_outputs, get_flops
 import yolo.dataset as dataset
@@ -169,26 +169,21 @@ def main(_argv):
     writer = tf.summary.create_file_writer(log_dir)
     with open(FLAGS.classes, "r") as class_file:
         num_classes = len([class_name.strip() for class_name in class_file.readlines()])
-    if FLAGS.tiny:
-        # TODO: replace num_classes
-        model = YoloV3Tiny(FLAGS.size, training=True, classes=num_classes)
-        anchors = yolo_tiny_anchors
-        anchor_masks = yolo_tiny_anchor_masks
-    else:
-        # backbone = Darknet(inputs=Input([1024, 1024, 3], batch_size=4, name="input"))
-        # print(backbone.summary())
-        model = YoloV3(FLAGS.size, training=True, classes=num_classes, lite=False)
-        print(model.summary())
-        # TODO plugin flag
-        all_records = read_csv(FLAGS.record_csv)
-        logging.info("Generating anchors")
 
-        anchors, _, _ = generate_anchors(all_records, 9)
-        anchor_masks = yolo_anchor_masks
-        np.save(os.path.join(FLAGS.out_dir, "anchors.npy"), anchors)
+    # backbone = darknet_backbone(inputs=Input([1024, 1024, 3], batch_size=4, name="input"))
+    # print(backbone.summary())
+    model = yolo_3(FLAGS.size, training=True, classes=num_classes,)
+    print(model.summary())
+    # TODO plugin flag
+    all_records = read_csv(FLAGS.record_csv)
+    logging.info("Generating anchors")
+
+    anchors, _, _ = generate_anchors(all_records, 9)
+    anchor_masks = yolo_anchor_masks
+    np.save(os.path.join(FLAGS.out_dir, "anchors.npy"), anchors)
     # with writer.as_default():
     #     # store flops
-    #     model_flops = get_flops(Darknet, size=(FLAGS.size, FLAGS.size))
+    #     model_flops = get_flops(darknet_backbone, size=(FLAGS.size, FLAGS.size))
     #     tf.summary.scalar("flops", tf.Variable(model_flops), step=1)
     #     writer.flush()
 
@@ -235,7 +230,7 @@ def main(_argv):
             freeze_all(model)
     print(model.summary())
     optimizer = keras.optimizers.Adam(lr=FLAGS.learning_rate)
-    loss = [YoloLoss(anchors[mask], classes=num_classes) for mask in anchor_masks]
+    loss = [yolo_loss(anchors[mask], classes=num_classes) for mask in anchor_masks]
 
     if FLAGS.mode == "eager_tf":
         # Eager mode is great for debugging

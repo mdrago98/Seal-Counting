@@ -1,7 +1,7 @@
 from absl import app, flags, logging
 from absl.flags import FLAGS
 import numpy as np
-from yolo.models import YoloV3, YoloV3Tiny
+from yolo.models import yolo_3, yolo3_dense
 from yolo.utils import load_darknet_weights
 import tensorflow as tf
 
@@ -17,9 +17,9 @@ def main(_argv):
         tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
     if FLAGS.tiny:
-        yolo = YoloV3Tiny(classes=FLAGS.num_classes)
+        yolo = yolo3_dense(classes=FLAGS.num_classes)
     else:
-        yolo = YoloV3(classes=FLAGS.num_classes)
+        yolo = yolo_3(classes=FLAGS.num_classes)
     yolo.summary()
     logging.info("model created")
 

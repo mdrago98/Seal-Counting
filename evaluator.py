@@ -46,8 +46,8 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # GT_PATH = os.path.join(os.getcwd(), "input", "ground-truth")
 # DR_PATH = os.path.join(os.getcwd(), "input", "detection-results")
-GT_PATH = os.path.join("/home/md273/model_zoo/416_eager/eval/ground-truth")
-DR_PATH = os.path.join("/home/md273/model_zoo/416_eager/eval/detection_results")
+GT_PATH = os.path.join("/home/md273/model_zoo/608/eval/ground-truth")
+DR_PATH = os.path.join("/home/md273/model_zoo/608/eval/detection_results")
 # if there are no images then no animation can be shown
 IMG_PATH = os.path.join(os.getcwd(), "input", "images-optional")
 if os.path.exists(IMG_PATH):

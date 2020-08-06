@@ -25,7 +25,7 @@ from data.generate_tfrecords import (
 )
 from data.image_handler import extract_intervals, get_bbox, is_in_bounding_box
 from yolo import dataset
-from yolo.models import YoloV3
+from yolo.models import yolo_3
 import tensorflow as tf
 import pickle
 from time import time
@@ -39,17 +39,14 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_string("classes", "./data/data_files/seal.names", "path to classes file")
 flags.DEFINE_string(
-    "weights", "/home/md273/model_zoo/416/checkpoints/yolov3_train_11.tf", "path to weights file",
+    "weights", "/home/md273/model_zoo/608/checkpoints/yolov3_train_8.tf", "path to weights file",
 )
 flags.DEFINE_boolean("tiny", False, "yolov3 or yolov3-tiny")
-flags.DEFINE_integer("size", 416, "resize images to")
-flags.DEFINE_string(
-    "tfrecord", "/data2/seals/tfrecords/416/test", "tfrecord instead of image",
-)
-flags.DEFINE_string("output", "/home/md273/model_zoo/416_eager/eval", "path to output the results")
+flags.DEFINE_integer("size", 608, "resize images to")
+flags.DEFINE_string("output", "/home/md273/model_zoo/608/eval", "path to output the results")
 # flags.DEFINE_integer("num_classes", 80, "number of classes in the model")
 flags.DEFINE_string(
-    "anchor_path", "/home/md273/model_zoo/416/anchors.npy", "path to the anchor file",
+    "anchor_path", "/home/md273/model_zoo/608/anchors.npy", "path to the anchor file",
 )
 
 
@@ -219,7 +216,7 @@ def main(_argv):
     # TODO: save anchors during training and load
     class_names = [c.strip() for c in open(FLAGS.classes).readlines()]
     anchors = np.load(FLAGS.anchor_path)
-    model = YoloV3(classes=len(class_names), anchors=anchors, training=False)
+    model = yolo_3(classes=len(class_names), anchors=anchors, training=False)
     model.load_weights(FLAGS.weights).expect_partial()
     logging.info("Weights loaded")
     locations = read_csv("/data2/seals/tfrecords/all.csv")
@@ -227,7 +224,7 @@ def main(_argv):
     train, test = split_frame(locations)
     logging.info("Locations loaded")
     grouped = split(test, "tiff_file")
-    for filename, locations, _ in grouped[2:10]:
+    for filename, locations, _ in grouped[:10]:
         logging.info(f"extracting {filename}")
         predict_on_patches(filename, (FLAGS.size, FLAGS.size), locations, model)
     # predict_on_patches(grouped_train)

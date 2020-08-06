@@ -13,11 +13,9 @@ import tensorflow as tf
 from pandas import DataFrame, read_excel, concat as pd_concat, read_csv, isna
 from PIL import Image
 from pathlib import Path
-from absl import flags, app
+from absl import flags, app, logging
 from tqdm import tqdm
 from os import getcwd, environ
-
-from helpers.utils import get_logger
 
 
 from data.image_handler import (
@@ -62,10 +60,10 @@ flags.DEFINE_float("train_size", 0.8, "The size of the training data")
 flags.DEFINE_float("validation", 0.2, "The size of the training data")
 
 
+logger = logging
+
 data = namedtuple("data", ["filename", "object", "interval"])
 transformed_example = namedtuple("TransformedExample", ["filename", "encoded", "object"])
-
-logger = None
 
 
 def get_random_crop_coord(
@@ -354,7 +352,6 @@ def split(dataset: DataFrame, group_key: str) -> list:
     ]
 
 
-@timer(logger)
 def write_to_record(
     dataset: DataFrame,
     output_dir: str,
@@ -373,7 +370,7 @@ def write_to_record(
     :param size: the image crop size
     :return: None
     """
-    grouped_train = split(dataset, "tiff_file")
+    grouped_train = split(dataset, "tiff_file")[170:]
     all_data = DataFrame()
     Path(path.join(output_dir, name)).mkdir(exist_ok=True, parents=True)
     extract_island = partial(
@@ -449,8 +446,6 @@ def write_classes(output_dir, classes: list, name="seals.name"):
 
 def main(argv: list):
     # TODO: add flag for validation dataset
-    global logger
-    logger = get_logger(FLAGS.output_location)
     out_size = (FLAGS.image_size, FLAGS.image_size)
     # locations = read_excel(FLAGS.pixel_coord, sheet_name="PixelCoordinates",)
     file_props = read_excel(FLAGS.pixel_coord, sheet_name="FileOverview",).dropna()
@@ -468,13 +463,14 @@ def main(argv: list):
     logger.info("Generating training records")
     train = train.sort_values("image_width")
     write_to_record(train, FLAGS.output_location, "train", size=out_size)
-    logger.info("Generating training records")
-    all_files = read_excel(FLAGS.pixel_coord, sheet_name="PixelCoordinates",)[
-        ["tiff_file", "layer_name", "x_pixel", "y_pixel"]
-    ].merge(file_props[["tiff_file", "image_width", "image_height"]], how="inner")
-    all_files = all_files[isna(all_files).any(axis=1)]
-    all_files = all_files.fillna(-100)
-    write_to_record(all_files, FLAGS.output_location, "background", size=out_size)
+
+    # logger.info("Generating training records")
+    # all_files = read_excel(FLAGS.pixel_coord, sheet_name="PixelCoordinates",)[
+    #     ["tiff_file", "layer_name", "x_pixel", "y_pixel"]
+    # ].merge(file_props[["tiff_file", "image_width", "image_height"]], how="inner")
+    # all_files = all_files[isna(all_files).any(axis=1)]
+    # all_files = all_files.fillna(-100)
+    # write_to_record(all_files, FLAGS.output_location, "background", size=out_size)
 
 
 def split_frame(locations):

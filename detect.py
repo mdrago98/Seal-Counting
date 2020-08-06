@@ -11,7 +11,7 @@ import tensorflow as tf
 from pandas import read_excel
 
 from yolo import dataset
-from yolo.models import YoloV3, YoloV3Tiny
+from yolo.models import yolo_3, yolo3_dense
 from yolo.dataset import transform_images, load_tfrecord_dataset
 from yolo.utils import draw_outputs
 from matplotlib import pyplot as plt
@@ -37,9 +37,9 @@ def main(_argv):
         tf.config.experimental.set_memory_growth(physical_device, True)
 
     if FLAGS.tiny:
-        yolo = YoloV3Tiny(classes=FLAGS.num_classes)
+        yolo = yolo3_dense(classes=FLAGS.num_classes)
     else:
-        yolo = YoloV3(classes=FLAGS.num_classes)
+        yolo = yolo_3(classes=FLAGS.num_classes)
 
     yolo.load_weights(FLAGS.weights).expect_partial()
 
