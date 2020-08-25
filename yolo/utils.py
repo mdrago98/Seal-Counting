@@ -103,7 +103,7 @@ def broadcast_iou(box_1, box_2):
     return int_area / (box_1_area + box_2_area - int_area)
 
 
-def draw_outputs(img, outputs, class_names, color: str = "red"):
+def draw_outputs(img, outputs, color: str = "red"):
     boxes, objectness, classes, nums = outputs
     boxes, objectness, classes, nums = boxes[0], objectness[0], classes[0], nums[0]
     wh = np.flip(img.shape[0:2])
@@ -113,26 +113,13 @@ def draw_outputs(img, outputs, class_names, color: str = "red"):
         img = cv2.rectangle(img, x1y1, x2y2, COLORS.get(color, "red"), 2)
         img = cv2.putText(
             img,
-            "{} {:.4f}".format(class_names[int(classes[i])], objectness[i]),
+            "{} {:.4f}".format("seal", objectness[i]),
             x1y1,
-            cv2.FONT_HERSHEY_COMPLEX_SMALL,
-            1,
-            (0, 0, 255),
+            cv2.FONT_HERSHEY_PLAIN,
             2,
+            COLORS.get(color, "white"),
+            1,
         )
-    return img
-
-
-def draw_labels(x, y, class_names):
-    img = x.numpy()
-    boxes, classes = tf.split(y, (4, 1), axis=-1)
-    classes = classes[..., 0]
-    wh = np.flip(img.shape[0:2])
-    for i in range(len(boxes)):
-        x1y1 = tuple((np.array(boxes[i][0:2]) * wh).astype(np.int32))
-        x2y2 = tuple((np.array(boxes[i][2:4]) * wh).astype(np.int32))
-        img = cv2.rectangle(img, x1y1, x2y2, (255, 0, 0), 2)
-        img = cv2.putText(img, classes[i], x1y1, cv2.FONT_HERSHEY_COMPLEX_SMALL, 1, (0, 0, 255), 2)
     return img
 
 
@@ -144,6 +131,12 @@ def freeze_all(model, frozen=True):
 
 
 def get_flops(model, **kwargs):
+    """
+    A utility function to get the estimated flops
+    :param model: the model
+    :param kwargs: model arguments
+    :return:
+    """
     session = tf.compat.v1.Session()
     graph = tf.compat.v1.get_default_graph()
 

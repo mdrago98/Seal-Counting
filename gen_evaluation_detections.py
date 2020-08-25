@@ -1,70 +1,83 @@
 import os
-from glob import glob
-from io import BytesIO
-from itertools import permutations
 from pathlib import Path
 
 # from mean_average_precision import MeanAveragePrecision
-from random import sample
 
 import cv2
-from PIL import Image
 from absl import app, flags, logging
+from pandas import DataFrame, read_csv
 from mean_average_precision.detection_map import DetectionMAP
-from pandas import DataFrame, concat, read_excel, read_csv
-from tqdm import tqdm
-from mean_average_precision.detection_map import DetectionMAP
-from mean_average_precision.utils.show_frame import show_frame
 
 from data.generate_tfrecords import (
     extrapolate_patches,
-    clean_data,
     split_frame,
     split,
-    normalize_by_size,
 )
-from data.image_handler import extract_intervals, get_bbox, is_in_bounding_box
 from yolo import dataset
-from yolo.models import yolo_3
+from yolo.config import backbones, heads, masks
 import tensorflow as tf
-import pickle
 from time import time
-import seaborn as sns
 import numpy as np
 from matplotlib import pyplot as plt
+import matplotlib.patches as patches
 
-# from mean_average_precision import DetectionMAP
+from yolo.utils import draw_outputs, COLORS
 
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string("classes", "./data/data_files/seal.names", "path to classes file")
+
+flags.DEFINE_integer("size", 416, "the patch size")
+flags.DEFINE_integer("model_size", 416, "the model size")
 flags.DEFINE_string(
-    "weights", "/home/md273/model_zoo/608/checkpoints/yolov3_train_8.tf", "path to weights file",
+    "weights",
+    "/home/md273/model_zoo/416_darknet_1/checkpoints/yolov3_train_15.tf",
+    "path to weights file",
 )
-flags.DEFINE_boolean("tiny", False, "yolov3 or yolov3-tiny")
-flags.DEFINE_integer("size", 608, "resize images to")
-flags.DEFINE_string("output", "/home/md273/model_zoo/608/eval", "path to output the results")
-# flags.DEFINE_integer("num_classes", 80, "number of classes in the model")
 flags.DEFINE_string(
-    "anchor_path", "/home/md273/model_zoo/608/anchors.npy", "path to the anchor file",
+    "output", "/home/md273/model_zoo/416_darknet_1/eval", "path to output the results"
+)
+flags.DEFINE_string(
+    "anchor_path", "/home/md273/model_zoo/416_darknet_1/anchors.npy", "path to the anchor file",
 )
 
+flags.DEFINE_enum(
+    "backbone",
+    "original",
+    ["original", "dense"],
+    "original: the original YOLOv3 with darknet 53, "
+    "dense: Customised yolo v3 with a downsampling factor of 16, ",
+)
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+flags.DEFINE_enum(
+    "head",
+    "yolo3",
+    ["yolo3", "yolo3_dense_2", "yolo3_dense_1"],
+    "original: the original YOLOv3 with darknet 53,"
+    "dense: Customised yolo v3 with a downsampling factor of 16, and two scales ",
+)
+
+# os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 
-def bb_intersection_over_union(boxA: tf.Tensor, boxB: tf.Tensor) -> tf.Tensor:
+def bb_intersection_over_union(box_a: tf.Tensor, box_b: tf.Tensor) -> float:
+    """
+    Calculates the bounding box IOU over the the ground truth.
+    :param box_a: the first bounding box
+    :param box_b: the second bounding box
+    :return: the iou
+    """
     # determine the (x, y)-coordinates of the intersection rectangle
-    xA = max(boxA[0], boxB[0])
-    yA = max(boxA[1], boxB[1])
-    xB = min(boxA[2], boxB[2])
-    yB = min(boxA[3], boxB[3])
+    xA = max(box_a[0], box_b[0])
+    yA = max(box_a[1], box_b[1])
+    xB = min(box_a[2], box_b[2])
+    yB = min(box_a[3], box_b[3])
     # compute the area of intersection rectangle
     interArea = max(0, xB - xA + 1) * max(0, yB - yA + 1)
     # compute the area of both the prediction and ground-truth
     # rectangles
-    boxAArea = (boxA[2] - boxA[0] + 1) * (boxA[3] - boxA[1] + 1)
-    boxBArea = (boxB[2] - boxB[0] + 1) * (boxB[3] - boxB[1] + 1)
+    boxAArea = (box_a[2] - box_a[0] + 1) * (box_a[3] - box_a[1] + 1)
+    boxBArea = (box_b[2] - box_b[0] + 1) * (box_b[3] - box_b[1] + 1)
     # compute the intersection over union by taking the intersection
     # area and dividing it by the sum of prediction + ground-truth
     # areas - the interesection area
@@ -74,6 +87,11 @@ def bb_intersection_over_union(boxA: tf.Tensor, boxB: tf.Tensor) -> tf.Tensor:
 
 
 def calc_mean(iterable: list) -> float:
+    """
+    Calculates the mean of an iterable
+    :param iterable: the iterable of numeric types
+    :return: the mean
+    """
     return sum(iterable) / len(iterable)
 
 
@@ -90,6 +108,11 @@ def omit_zero_vals(x: tf.Tensor) -> tf.Tensor:
 
 
 def zero_filter(x):
+    """
+    A function to remove zero vectors from a tensor
+    :param x: the tensor to prune
+    :return: the pruned tensor
+    """
     return tf.boolean_mask(x, tf.cast(x, dtype=tf.bool))
 
 
@@ -101,7 +124,7 @@ def calculate_metrics(eval_data, model) -> tuple:
 
     for index, (image, labels) in enumerate(eval_data):
         t1 = time()
-        boxes, scores, classes, nums = model(image)
+        boxes, scores, classes, nums = model.predict(image)
         t2 = time()
         inference_times += [t2 - t1]
         labels = zero_filter(labels)
@@ -159,8 +182,29 @@ def write_gt(ground_truth: DataFrame, output: str):
     )
 
 
-def write_detections(boxes, conf, name):
-    with open(name, "w") as file:
+def normalise(ground_truth, model_size):
+    """
+    Apply fractional representation for the bounding boxes to get the normalised size
+    :param ground_truth: the ground truth files
+    :param model_size: the model size
+    :return: 
+    """
+    ground_truth["xmin"] = ground_truth["xmin"] / ground_truth["image_width"] * model_size
+    ground_truth["xmax"] = ground_truth["xmax"] / ground_truth["image_width"] * model_size
+    ground_truth["ymin"] = ground_truth["ymin"] / ground_truth["image_height"] * model_size
+    ground_truth["ymax"] = ground_truth["ymax"] / ground_truth["image_height"] * model_size
+    return ground_truth
+
+
+def write_detections(boxes, conf, output):
+    """
+    A fucntion to write the detections to file.
+    :param boxes: the boxes
+    :param conf: the confidence
+    :param output: the name of the file
+    :return: 
+    """
+    with open(output, "w") as file:
         lines = [
             f"0 {conf[i]} {int(box[0])} {int(box[1])} {int(box[2])} {int(box[3])}\n"
             for i, box in enumerate(boxes)
@@ -170,24 +214,38 @@ def write_detections(boxes, conf, name):
 
 
 def predict_on_patches(image_name: str, interval_size: tuple, seal_locations: DataFrame, model):
+    """
+    A function that executes the model on extracted patches from an aerial image
+    :param downsample: an int indicating the final downsampling size. 0 means no downsampling
+    :param image_name: the image name
+    :param interval_size: the patch size
+    :param seal_locations: the seal locations ground truth
+    :param model: the model to evaluate
+    :return: None
+    """
     inference_times = []
     patches = extrapolate_patches(image_name, seal_locations, interval_size, ignore_extrema=False)
     # TODO: remove
     # patches = [patch for patch in patches if patch.object.size != 0]
-    all_preds = []
-    frames = []
     for i, (image_bytes, transformed, patch_region) in enumerate(patches):
         image = tf.image.decode_png(image_bytes)
         image = tf.expand_dims(image, 0)
-        image = dataset.transform_images(image, FLAGS.size)
-
-        plt.imshow(image[0])
-        plt.scatter(transformed["x_pixel"], transformed["y_pixel"])
+        image = dataset.transform_images(image, FLAGS.model_size)
         t1 = time()
         boxes, scores, classes, nums = model(image)
         t2 = time()
         inference_times += [t2 - t1]
+        transformed = normalise(transformed, FLAGS.model_size)
 
+        if len(transformed) > 0:
+            output = os.path.join(FLAGS.output, "detections", f"{i}.png")
+            Path(output).parent.mkdir(exist_ok=True, parents=True)
+            plot(
+                image,
+                (boxes, scores, classes, nums),
+                transformed,
+                os.path.join(FLAGS.output, "detections", f"{i}.png"),
+            )
         # filtered_boxes = zero_filter(boxes)
         # if filtered_boxes.shape.rank == 1:
         #     filtered_boxes = tf.expand_dims(filtered_boxes, 0)
@@ -204,27 +262,58 @@ def predict_on_patches(image_name: str, interval_size: tuple, seal_locations: Da
             exist_ok=True, parents=True
         )
         write_detections(
-            (boxes[0] * interval_size[0]).numpy(),
+            (boxes[0] * FLAGS.model_size).numpy(),
             scores[0].numpy(),
             os.path.join(FLAGS.output, "detection_results", name),
         )
 
-    return frames
+
+def plot(image, predictions, transformations, output):
+    img = cv2.cvtColor(image[0].numpy(), cv2.COLOR_RGB2BGR)
+    img = draw_outputs(img, predictions, "green")
+    fig, ax = plt.subplots(1)
+    ax.imshow(img)
+    for index, row in transformations[["xmin", "ymin", "xmax", "ymax"]].iterrows():
+        patch = patches.Rectangle(
+            (row["xmin"], row["ymin"]),
+            row["xmax"] - row["xmin"],
+            row["ymax"] - row["ymin"],
+            linewidth=1,
+            edgecolor="r",
+            facecolor="none",
+        )
+        ax.add_patch(patch)
+    plt.savefig(output, bbox_inches="tight", dpi=800)
+    return img
 
 
 def main(_argv):
     # TODO: save anchors during training and load
     class_names = [c.strip() for c in open(FLAGS.classes).readlines()]
     anchors = np.load(FLAGS.anchor_path)
-    model = yolo_3(classes=len(class_names), anchors=anchors, training=False)
+
+    backbone = backbones[FLAGS.backbone]
+    head = heads[FLAGS.head]
+    anchor_masks = masks[FLAGS.head]
+    model = head(
+        FLAGS.model_size,
+        classes=len(class_names),
+        anchors=anchors,
+        masks=anchor_masks,
+        backbone=backbone,
+        training=False,
+    )
+    model.summary()
+    # model = yolo_3(classes=len(class_names), anchors=anchors, training=False, backbone=backbones[FLAGS.backbone])
     model.load_weights(FLAGS.weights).expect_partial()
     logging.info("Weights loaded")
+    logging.info(model.count_params())
     locations = read_csv("/data2/seals/tfrecords/all.csv")
     locations["y_pixel"] = locations["image_height"] - locations["y_pixel"]
-    train, test = split_frame(locations)
+    _, test = split_frame(locations)
     logging.info("Locations loaded")
     grouped = split(test, "tiff_file")
-    for filename, locations, _ in grouped[:10]:
+    for filename, locations, _ in grouped[:5]:
         logging.info(f"extracting {filename}")
         predict_on_patches(filename, (FLAGS.size, FLAGS.size), locations, model)
     # predict_on_patches(grouped_train)

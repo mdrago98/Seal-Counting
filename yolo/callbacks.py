@@ -15,6 +15,11 @@ class GPUReport(keras.callbacks.Callback):
     """
 
     def __init__(self, output, delay=10):
+        """
+        Initialises the gpu reporter
+        :param output: the output
+        :param delay: the monitor delay 
+        """
         super().__init__()
         self.times = []
         self.output = output
@@ -22,15 +27,19 @@ class GPUReport(keras.callbacks.Callback):
         self.timetaken = perf_counter()
         self.initial_usage = 0
         self.monitor = Monitor(self.delay)
-
-    def on_train_begin(self, logs=None):
         self.monitor.start()
+
+    # def on_train_begin(self, logs=None):
+    #     self.monitor.start()
 
     def on_train_end(self, logs=None):
         if logs is None:
             logs = {}
         self.monitor.stop()
-        df = DataFrame(self.monitor.results, columns=["Reading", "Memory Usage", "GPU Load"])
+        df = DataFrame(
+            self.monitor.results,
+            columns=["Reading", "Memory Util", "Memory Total", "Memory Used", "GPU Load"],
+        )
         df.to_csv(self.output)
 
 
@@ -40,6 +49,10 @@ class TimeHistory(keras.callbacks.Callback):
     """
 
     def __init__(self, output):
+        """
+        Initialises the time history callback.
+        :param output: the output location
+        """
         super().__init__()
         self.times = []
         self.seen_sampes = 0

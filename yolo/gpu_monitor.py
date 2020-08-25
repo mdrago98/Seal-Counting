@@ -14,7 +14,15 @@ class Monitor(Thread):
     def run(self):
         reading = 0
         while not self.stopped:
-            self.results += [(reading, self.gpu.memoryUtil, self.gpu.load)]
+            self.results += [
+                (
+                    reading,
+                    gpu.getGPUs()[0].memoryUtil,
+                    gpu.getGPUs()[0].memoryTotal,
+                    gpu.getGPUs()[0].memoryUsed,
+                    gpu.getGPUs()[0].load,
+                )
+            ]
             time.sleep(self.delay)
 
     def stop(self):

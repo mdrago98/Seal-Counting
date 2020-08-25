@@ -44,10 +44,12 @@ if args.set_class_iou is not None:
 # make sure that the cwd() is the location of the python script (so that every path makes sense)
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
+base_output = "/home/md273/model_zoo/416_darknet_1/eval"
+# base_output = "/home/md273/model_zoo/416_darknet_1/eval"
 # GT_PATH = os.path.join(os.getcwd(), "input", "ground-truth")
 # DR_PATH = os.path.join(os.getcwd(), "input", "detection-results")
-GT_PATH = os.path.join("/home/md273/model_zoo/608/eval/ground-truth")
-DR_PATH = os.path.join("/home/md273/model_zoo/608/eval/detection_results")
+GT_PATH = os.path.join("/home/md273/model_zoo/416_darknet_1/eval/ground-truth")
+DR_PATH = os.path.join("/home/md273/model_zoo/416_darknet_1/eval/detection_results")
 # if there are no images then no animation can be shown
 IMG_PATH = os.path.join(os.getcwd(), "input", "images-optional")
 if os.path.exists(IMG_PATH):
@@ -375,7 +377,7 @@ def draw_plot_func(
 TEMP_FILES_PATH = ".temp_files"
 if not os.path.exists(TEMP_FILES_PATH):  # if it doesn't exist already
     os.makedirs(TEMP_FILES_PATH)
-output_files_path = "output"
+output_files_path = os.path.join(base_output, "output")
 if os.path.exists(output_files_path):  # if it exist already
     # reset the output directory
     shutil.rmtree(output_files_path)
@@ -764,7 +766,7 @@ with open(output_files_path + "/output.txt", "w") as output_file:
         ap, mrec, mprec = voc_ap(rec[:], prec[:])
         sum_AP += ap
         text = (
-            "{0:.2f}%".format(ap * 100) + " = " + class_name + " AP "
+            class_name + ": {0:.2f}%".format(ap * 100) + " AP "
         )  # class_name + " AP = {0:.2f}%".format(ap*100)
         """
          Write to output.txt

@@ -13,11 +13,13 @@ from yolo.models import (
     darknet_conv,
     blocking_convolution,
     dense_darknet,
-    yolo3_dense,
+    yolo_3,
 )
 import pandas as pd
 from matplotlib import pyplot as plt
 import tensorflow.keras.backend as K
+import receptive_field as rf
+from tensorflow.keras.layers import Conv2D
 
 
 size = 800
@@ -43,10 +45,24 @@ yolo_anchors = (
     / 416
 )
 
-test = dense_darknet()
-test.summary()
-
-test = yolo3_dense(416, training=True)
+# g = tf.Graph()
+# with g.as_default():
+#     images = tf.compat.v1.placeholder(tf.float32, shape=(1, 416, 416, 3), name="input_image")
+#     dense_darknet()
+#
+# (
+#     rf_x,
+#     rf_y,
+#     eff_stride_x,
+#     eff_stride_y,
+#     eff_pad_x,
+#     eff_pad_y,
+# ) = rf.compute_receptive_field_from_graph_def(g.as_graph_def(), "input_image", "dense_darknet")
+#
+# test = dense_darknet
+# # test.summary()
+#
+# test = yolo_3(416, training=True, backbone=test)
 
 
 def backbone(name=None, size=(None, None)):
@@ -140,7 +156,6 @@ def iterate_size(size, train_dataset, mult=1):
     )
     size_alloc = []
     for x_train, _ in train_dataset.take(1):
-        test(x_train)
         size_alloc += [tf.size(x_train)]
         size_alloc += [reduce(lambda x, y: x * y, stage_1(mult)(x_train).shape)]
         size_alloc += [reduce(lambda x, y: x * y, stage_2(mult)(x_train).shape)]
@@ -151,7 +166,8 @@ def iterate_size(size, train_dataset, mult=1):
     return size_alloc, np.sum([K.count_params(w) for w in stage_6(mult).trainable_weights])
 
 
-for size in [416, 512, 608, 800, 1024]:
+# [416, 512, 608, 800]
+for size in [1024]:
     sizes, train_param = iterate_size(size, train_dataset)
     print(f"{size}: {sizes}")
     print(f"trainable params {train_param}")

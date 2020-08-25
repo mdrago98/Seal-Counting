@@ -13,7 +13,7 @@ IMAGE_FEATURE_MAP = {
 
 
 @tf.function
-def transform_targets_for_output(y_true, grid_size, anchor_idxs):
+def transform_targets_for_out(y_true, grid_size, anchor_idxs):
     """
     A function to transform the targets for training
     :param y_true: the ground truth labels
@@ -56,9 +56,9 @@ def transform_targets_for_output(y_true, grid_size, anchor_idxs):
     return tf.tensor_scatter_nd_update(y_true_out, indexes.stack(), updates.stack())
 
 
-def transform_targets(y_train, anchors, anchor_masks, size):
+def transform_targets(y_train, anchors, anchor_masks, size, downsampling_factor=32):
     y_outs = []
-    grid_size = size // 32
+    grid_size = size // downsampling_factor
 
     # calculate anchor index for true boxes
     anchors = tf.cast(anchors, tf.float32)
@@ -76,13 +76,19 @@ def transform_targets(y_train, anchors, anchor_masks, size):
     y_train = tf.concat([y_train, anchor_idx], axis=-1)
 
     for anchor_idxs in anchor_masks:
-        y_outs.append(transform_targets_for_output(y_train, grid_size, anchor_idxs))
+        y_outs.append(transform_targets_for_out(y_train, grid_size, anchor_idxs))
         grid_size *= 2
 
     return tuple(y_outs)
 
 
 def transform_images(x_train, size):
+    """
+    Transforms the input tensor down to the required size and centers integers to floats between 0 and 1
+    :param x_train: the image tensor
+    :param size: the size
+    :return: the transformed tensor
+    """
     x_train = tf.image.resize(x_train, (size, size))
     x_train = x_train / 255
     return x_train

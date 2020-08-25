@@ -10,7 +10,7 @@ from numpy import int64
 import numpy as np
 
 import tensorflow as tf
-from pandas import DataFrame, read_excel, concat as pd_concat, read_csv, isna
+from pandas import DataFrame, read_excel, concat as pd_concat, read_csv
 from PIL import Image
 from pathlib import Path
 from absl import flags, app, logging
@@ -18,7 +18,7 @@ from tqdm import tqdm
 from os import getcwd, environ
 
 
-from data.image_handler import (
+from .image_handler import (
     get_bbox,
     is_in_bounding_box,
     normalise_coordinates,
@@ -31,8 +31,6 @@ from data.pipeline import PIPELINE
 from sklearn.model_selection import train_test_split
 
 import multiprocessing
-
-from helpers.utils import timer
 
 environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
@@ -370,7 +368,7 @@ def write_to_record(
     :param size: the image crop size
     :return: None
     """
-    grouped_train = split(dataset, "tiff_file")[170:]
+    grouped_train = split(dataset, "tiff_file")
     all_data = DataFrame()
     Path(path.join(output_dir, name)).mkdir(exist_ok=True, parents=True)
     extract_island = partial(
